@@ -159,6 +159,7 @@
 
   function categorize(t, overrides, userRules) {
     if (overrides && overrides[t.key]) return { cat: overrides[t.key], tag: null };
+    if (t.forceCat) return { cat: t.forceCat, tag: null };
     const s = (t.label + " | " + t.op + " | " + t.info).toUpperCase();
     for (const r of userRules || []) if (r.txt && s.includes(r.txt.toUpperCase()) && (r.sens === "tous" || (r.sens === "credit") === (t.amount > 0))) return { cat: r.cat, tag: r.evitable ? "evitable" : null, rule: r.txt };
     for (const [re, cat, tag] of RULES) {

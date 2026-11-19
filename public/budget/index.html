@@ -215,7 +215,11 @@ details.rec summary .a::after{content:" ›";color:var(--muted)}details.rec[open
 html.embed header,html.embed nav#nav{display:none!important}
 html.embed body{padding:0 0 24px!important}
 html.embed main{padding-top:4px}
-html.embed .subnav{top:0}
+html.embed .subnav{display:none!important}
+html.embed .chk .g,html.embed .pl>span:last-child,html.embed .pl>b:last-child{flex:none}
+html.embed .chk .t{flex:1}
+html.embed .pl{flex-wrap:wrap}
+html.embed td,html.embed th{overflow-wrap:anywhere}
 html.embed.nosub .subnav{display:none!important}
 @media(min-width:1000px){html.embed body{padding:0 0 24px!important}}
 </style>
@@ -382,6 +386,7 @@ html.embed.nosub .subnav{display:none!important}
 <script src="./paie.js"></script>
 <script src="./pret.js"></script>
 <script src="./courses.js"></script>
+<script src="./jour.js"></script>
 <script>
 const EMBED = new URLSearchParams(location.search).has("embed");
 try { const n = localStorage.getItem("pb-name"); if (n) document.addEventListener("DOMContentLoaded", () => { const h = document.getElementById("hello"); if (h) h.textContent = "Bonjour " + n; }); } catch(e){}
@@ -399,7 +404,7 @@ const eur = (v, d=0) => v.toLocaleString("fr-FR",{minimumFractionDigits:d,maximu
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const store = {
   get(k, d){ try{ const v = localStorage.getItem("budget_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
-  set(k, v){ try{ localStorage.setItem("budget_"+k, JSON.stringify(v)); }catch(e){} }
+  set(k, v){ try{ localStorage.setItem("budget_"+k, JSON.stringify(v)); }catch(e){} if (k !== "paieSel") pbChanged(); }
 };
 let sources = (store.get("sources", null) || []).filter(s => !s.builtin);
 const PAIE_BUILTIN = [];
@@ -476,7 +481,7 @@ let provisions = store.get("provisions", PROV_DEF), couple = store.get("couple",
 const LIVRET_A = 1.7; // taux net du livret A du 1er août 2026 au 31 janvier 2027
 function compute(){
   refreshPaie();
-  rows = E.analyse(E.merge(sources), overrides, rules);
+  rows = E.analyse(E.merge(sources.concat(manualSources())), overrides, rules);
   if (!rows.length){ A = null; return; }
   addReimbursements();
   const t = rows.filter(r=>!r.synth).map(r => +r.date);
@@ -762,7 +767,7 @@ function renderMois(){
     kpi("Encore disponible", `<span class="${envLeft>0?'':'neg'}">${eur(envLeft)}</span>`, `${dim-day} jours restants · ${eur(envLeft/Math.max(1,dim-day))} / jour`) +
     kpi("Prélèvements à venir", eur(avenir.reduce((a,x)=>a+x.perMonth,0)), `${avenir.length} d'ici la fin du mois`, "hero");
   const si = document.getElementById("solde"); if (solde != null && document.activeElement !== si) si.value = solde.v;
-  si.onchange = e => { const v = parseFloat(String(e.target.value).replace(",",".")); solde = isNaN(v) ? null : {v, d: new Date().toLocaleDateString("fr-FR")}; store.set("solde", solde); renderMois(); };
+  si.onchange = e => { const v = parseFloat(String(e.target.value).replace(",",".")); solde = isNaN(v) ? null : {v, d: new Date().toLocaleDateString("fr-FR"), iso: isoToday()}; store.set("solde", solde); renderMois(); };
   document.getElementById("rav").innerHTML = solde == null ? `<p class="sub">Exemple : avec 900 € sur le compte, ${eur(avenir.reduce((a,x)=>a+x.perMonth,0))} de prélèvements à venir et ${eur(envLeft)} d'enveloppes restantes, il te resterait ${eur(900 - avenir.reduce((a,x)=>a+x.perMonth,0) - envLeft)}.</p>` : (() => {
       const pr = avenir.reduce((a,x)=>a+x.perMonth,0), rest = solde.v - pr - envLeft;
       return `<div class="pl"><span>Solde saisi le ${solde.d}</span><span>${eur(solde.v,2)}</span></div><div class="pl"><span>− prélèvements encore à venir</span><span>${eur(pr)}</span></div><div class="pl"><span>− reste des enveloppes du mois</span><span>${eur(envLeft)}</span></div>
@@ -1383,7 +1388,7 @@ async function parseFile(f){
   const rows = E.fromCSV(await readText(f)); if (!rows.length) throw new Error("aucune opération"); return rows;
 }
 function renderSources(){
-  document.getElementById("sources").innerHTML = sources.length ? `<table><tr><th>Relevé</th><th class="n">Opérations</th><th>Période</th><th></th></tr>` + sources.map((s,i)=>{
+  document.getElementById("sources").innerHTML = sources.length ? `<table class="stack"><tr><th>Relevé</th><th class="n">Opérations</th><th>Période</th><th></th></tr>` + sources.map((s,i)=>{
     const ds = s.rows.map(r=>r.d).sort(), f = d => d.split("-").reverse().join("/");
     return `<tr><td>${esc(s.name)}</td><td class="n">${s.rows.length}</td><td>${ds.length?f(ds[0])+" → "+f(ds[ds.length-1]):""}</td><td class="n"><label style="font-size:12.5px;margin-right:8px"><input type="checkbox" data-t="${i}" ${s.hidden?"":"checked"}> inclus</label><button class="btn ghost" style="padding:5px 9px" data-x="${i}">Retirer</button></td></tr>`; }).join("") + `</table>`
     : `<p class="sub">Aucun relevé : ajoute un export CSV ou Excel.</p>`;

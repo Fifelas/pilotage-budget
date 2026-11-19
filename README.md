@@ -19,6 +19,7 @@ En cours de migration depuis la version Claude : budget et relevés bancaires (s
 ### 1. Base de données Supabase
 1. Ouvre le projet sur supabase.com, menu **SQL Editor** > **New query**.
 2. Colle tout le contenu de `supabase/migrations/001_init.sql` et clique **Run**.
+3. Puis fais de même avec `supabase/migrations/002_coffre_caddie_stock.sql` (coffre chiffré, caddie, stock).
 3. Menu **Authentication** > **URL Configuration** : mets `https://fifelas.github.io/pilotage-budget/` dans **Site URL** (c'est là que mènent les liens de confirmation d'e-mail).
 
 ### 2. Version ordi (GitHub Pages)

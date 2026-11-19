@@ -113,6 +113,7 @@
         const cost = (total(shopping([...menu, cand], portions, o.prices, idx, {})) - base) / (batch ? 2 : 1);
         let score = cost * (o.styles.includes("petitprix") ? 1.6 : 1) + rand() * 2.2;
         if (o.styles.includes("enfant") && !r.tags.includes("enfant")) score += 2;
+        if (o.stock && o.stock.length) score -= 2.2 * Object.keys(r.ing).filter(k => o.stock.includes(k)).length; // anti-gaspi : utiliser ce qui est déjà au frigo
         if (o.styles.includes("healthy") && !r.tags.includes("healthy") && !r.tags.includes("vege")) score += 1.5;
         if (!o.styles.includes("vege") && r.tags.includes("vege")) score += 0.3;
         const baseOf = b => ["pates","lasagnes","riz","semoule","pommes_terre","lentilles","pain_mie","tortillas","pate_brisee","pate_pizza"].find(k => k in b.ing) || "autre";
