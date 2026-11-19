@@ -3,6 +3,8 @@ import { esc, eur, $, sheet } from "./ui.js";
 import { APP_VERSION } from "./config.js";
 import { notifStatus, notifOpenSettings, isNative } from "./native.js";
 import { home, setHomeCity, priceCoverage, ATTRIB } from "./apis.js";
+import { translatorStatus, downloadTranslator } from "./recipes.js";
+import { opAccount, opLogout } from "./opshare.js";
 
 const DETAILS = [
   ["plus", "comptes", "🗂️", "Relevés et import", "Ajouter un relevé, une sauvegarde, tes règles"],
@@ -36,6 +38,8 @@ export async function renderPlus(ctx, main) {
   <div class="card"><h2>⚙️ Réglages</h2>
     <button class="line" id="r_city"><span class="ic">📍</span><span class="tx"><b>Ville pour les prix</b><small>${h ? esc(h.city) + (h.postcode ? " (" + esc(h.postcode) + ")" : "") : "non renseignée"}</small></span><span class="chev">›</span></button>
     ${ns.available ? `<button class="line" id="r_notif"><span class="ic">📲</span><span class="tx"><b>Lecture des paiements</b><small>${ns.enabled ? "activée" : "désactivée"} · notifications de ta banque</small></span><span class="chev">›</span></button>` : ""}
+    <button class="line" id="r_tr"><span class="ic">🌍</span><span class="tx"><b>Traducteur hors ligne</b><small id="r_trs">${isNative() ? "vérification…" : "sur ordinateur : traduction en ligne (limitée)"}</small></span><span class="chev">›</span></button>
+    <button class="line" id="r_op"><span class="ic">🧾</span><span class="tx"><b>Compte Open Food Facts</b><small>${opAccount() ? "connecté : " + esc(opAccount().user) + " · toucher pour se déconnecter" : "pour partager tes tickets sur Open Prices"}</small></span><span class="chev">›</span></button>
     <button class="line" id="r_upd"><span class="ic">🆕</span><span class="tx"><b>Mises à jour</b><small id="r_updt">Version ${esc(APP_VERSION)}</small></span><span class="chev">›</span></button>
     <button class="line" id="r_out"><span class="ic">🚪</span><span class="tx"><b>Se déconnecter</b><small>${esc(S.session.user.email)}</small></span></button>
   </div>
@@ -71,6 +75,15 @@ export async function renderPlus(ctx, main) {
       <p class="sub">Dans l'écran qui s'ouvre, active « Pilotage budget — paiements ». Il faut que les notifications de ta banque soient activées.</p><button class="btn full" id="no">${ns.enabled ? "Ouvrir les réglages Android" : "Activer"}</button>`);
     el.querySelector("#no").onclick = notifOpenSettings;
   };
+  if (isNative()) translatorStatus().then(t => { const e = $("#r_trs"); if (e) e.textContent = t.ready ? "installé · recettes traduites sans internet ni limite" : "non installé · toucher pour télécharger (≈ 30 Mo)"; });
+  $("#r_tr").onclick = async () => {
+    if (!isNative()) return ctx.toast("Disponible dans l'appli Android");
+    const t = await translatorStatus(); if (t.ready) return ctx.toast("Le traducteur est déjà installé");
+    const { el, close } = sheet(`<h2>Traducteur hors ligne</h2><p class="hint">Télécharge le modèle français de Google (≈ 30 Mo, une seule fois). Ensuite, les recettes se traduisent sur le téléphone, sans internet et sans limite. Si tu es en 4G ou en partage de connexion, ça consomme ces 30 Mo de ton forfait.</p><button class="btn full" id="tdl">Télécharger</button><div id="tdm" class="sub mt" aria-live="polite"></div>`);
+    el.querySelector("#tdl").onclick = async () => { const b = el.querySelector("#tdl"), m = el.querySelector("#tdm"); b.disabled = true; m.textContent = "Téléchargement en cours… (1 à 3 minutes)";
+      try { await downloadTranslator(); close(); ctx.toast("Traducteur installé"); renderPlus(ctx, main); } catch (e) { m.innerHTML = `<span class="err">${esc(e.message || "Échec du téléchargement")}</span>`; b.disabled = false; } };
+  };
+  $("#r_op").onclick = () => { if (opAccount()) { opLogout(); ctx.toast("Compte Open Food Facts déconnecté"); renderPlus(ctx, main); } else ctx.toast("La connexion se fait au moment de partager un ticket (Courses → En magasin)"); };
   $("#r_upd").onclick = async () => { $("#r_updt").textContent = "Recherche…"; const u = await ctx.checkUpdate(); $("#r_updt").textContent = u ? `Version ${u.version} disponible (bannière en haut)` : isNative() ? `Version ${APP_VERSION} · à jour` : "Sur ordinateur, la page est toujours à jour"; };
   $("#r_out").onclick = () => ctx.signOut();
 }

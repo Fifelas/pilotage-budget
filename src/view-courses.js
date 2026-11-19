@@ -4,6 +4,8 @@ import { esc, eur, dFR, num, sheet, $, isoToday, isoPlus, daysUntil, loadScript 
 import { scanBarcode } from "./native.js";
 import { productByBarcode, communityPrice, nearbyStores, home, setHomeCity, ATTRIB } from "./apis.js";
 import { realPrices } from "./prices.js";
+import { opAccount, opLogin, uploadReceipt } from "./opshare.js";
+import { openUrl } from "./update.js";
 import { CATS as WCATS, byCategory, search as wSearch, frTitles, recipeFR, recipeCost } from "./recipes.js";
 
 export const RAYONS = ["Fruits & légumes", "Boucherie & volaille", "Poissonnerie", "Crèmerie & frais", "Surgelés", "Épicerie salée", "Épicerie sucrée", "Boissons", "Boulangerie", "Hygiène & maison", "Bébé", "Autres"];
@@ -106,6 +108,7 @@ function drawMagasin(el) {
   const total = cart.reduce((a, i) => a + (i.price || 0) * (i.units || 1), 0), noPrice = cart.filter(i => i.price == null).length;
   const r = total / Math.max(1, budget);
   el.innerHTML = `<button class="card line" id="m_store"><span class="ic">🏪</span><span class="tx"><b>${st ? esc(st.name) : "Choisir le magasin"}</b><small>${st ? (st.dist != null ? `à ${st.dist.toFixed(1).replace(".", ",")} km · ` : "") + "touche pour changer" : "pour retrouver les prix relevés près de chez toi"}</small></span><span class="chev">›</span></button>
+    <div class="ufc"><span>${st ? `Enseigne : <b>${esc(chainName(st))}</b>` : "Quel magasin est le moins cher près de chez toi ?"}</span><button class="link" id="m_ufc">Classement Que Choisir ↗</button></div>
     <div class="hcard ${r > 1 ? "hneg" : ""}"><div class="l">Dans le caddie</div><div class="big">${eur(total, 2)}</div>
       <div class="gauge"><i style="width:${Math.min(100, r * 100)}%"></i></div>
       <div class="row2"><span>${cart.length} article${cart.length > 1 ? "s" : ""}${noPrice ? ` · ${noPrice} sans prix` : ""}</span><button class="lnk" id="m_budget">Budget ${eur(budget)}</button></div></div>
@@ -113,8 +116,11 @@ function drawMagasin(el) {
     ${todo.length ? `<div class="card"><h2>Reste à prendre <span class="pill">${todo.length}</span></h2><p class="sub">Coche un article quand il est dans le caddie.</p>${RAYONS.map(rn => [rn, todo.filter(i => i.rayon === rn)]).filter(([, l]) => l.length).map(([rn, l]) => `<div class="rayon">${rn}</div>${l.map(itemLine).join("")}`).join("")}</div>` : ""}
     ${cart.length ? `<div class="card"><h2>Dans le caddie</h2>${cart.map(i => `<button class="cartline" data-edit="${i.id}"><span class="nm"><b>${esc(i.name)}</b><small>${i.brand ? esc(i.brand) + " · " : ""}${i.units > 1 ? i.units + " × " : ""}${i.price != null ? eur(i.price, 2) : "prix à saisir"}</small></span><span class="pr ${i.price == null ? "muted" : ""}">${i.price != null ? eur(i.price * (i.units || 1), 2) : "—"}</span></button>`).join("")}
       <button class="btn full mt" id="m_end">Terminer les courses</button></div>` : ""}
+    <button class="card line" id="m_op"><span class="ic">🧾</span><span class="tx"><b>Partager un ticket sur Open Prices</b><small>Une photo de ticket = des dizaines de prix pour ta région</small></span><span class="chev">›</span></button>
     <p class="foot">${ATTRIB}</p>`;
   $("#m_store").onclick = storeSheet;
+  $("#m_ufc").onclick = () => openUrl("https://www.quechoisir.org/carte-interactive-drives-n21243/");
+  $("#m_op").onclick = () => shareTicket();
   $("#m_budget").onclick = () => { const { el: s, close } = sheet(`<h2>Budget pour ces courses</h2><div class="amount"><input id="mb" inputmode="decimal" value="${budget}" autofocus aria-label="Budget"><span>€</span></div><button class="btn full mt" id="mbok">OK</button>`); s.querySelector("#mbok").onclick = () => { const v = num(s.querySelector("#mb").value); if (v > 0) lsSet("pb-caddie-budget", v); close(); draw(); }; };
   $("#m_scan").onclick = () => scanFlow("magasin");
   $("#m_free").onclick = () => productSheet({ name: "" }, "magasin");
@@ -213,9 +219,11 @@ function endSheet(cart, total) {
     <label class="sw"><input type="checkbox" id="e_b" ${total > 0 ? "checked" : ""}> Ajouter ${eur(total, 2)} au budget (Courses)</label>
     <label class="sw"><input type="checkbox" id="e_p" checked> Garder les prix pour la prochaine fois</label>
     <label class="sw"><input type="checkbox" id="e_s" ${fresh.length ? "checked" : ""}> Mettre ${fresh.length} produit${fresh.length > 1 ? "s" : ""} frais au stock <span class="sub">(dates estimées, à corriger)</span></label>
+    <label class="sw"><input type="checkbox" id="e_o"> Partager la photo du ticket sur Open Prices</label>
     <button class="btn full mt" id="e_ok">Valider</button>`);
   el.querySelector("#e_ok").onclick = async () => {
-    const b = el.querySelector("#e_b").checked, p = el.querySelector("#e_p").checked, s = el.querySelector("#e_s").checked; close();
+    const b = el.querySelector("#e_b").checked, p = el.querySelector("#e_p").checked, s = el.querySelector("#e_s").checked, o = el.querySelector("#e_o").checked; close();
+    if (o) setTimeout(() => shareTicket({ total, count: cart.length }), 400);
     if (b && total > 0) { await C.ctx.ready(); C.ctx.act("add", { amount: -Math.round(total * 100) / 100, label: st ? st.name : "Courses", cat: "courses" }); }
     if (p) { const obs = cart.filter(i => i.price != null).map(i => ({ household_id: hid(), product_key: i.barcode || norm(i.name), product_name: i.name, ean: i.barcode, store_brand: (st && (st.brand || st.name)) || "Magasin", store_name: (st && st.name) || "", store_osm_id: st && st.id, price: i.price, observed_on: isoToday(), source: "manuel", created_by: uid() })); if (obs.length) await db(C.ctx.sb.from("price_observations").insert(obs)); }
     if (s && fresh.length) { const rows = fresh.map(i => ({ household_id: hid(), name: i.name, qty: i.units > 1 ? `${i.units} ×` : (i.qty || ""), place: PLACE_OF(i.rayon), expires_on: DLC_OF[i.rayon] ? isoPlus(DLC_OF[i.rayon]) : null, barcode: i.barcode, added_by: uid() })); const d = await db(C.ctx.sb.from("pantry_items").insert(rows).select()); if (d) d.forEach(r => upsertLocal(C.pantry, r)); }
@@ -287,14 +295,17 @@ const STYLES = [["petitprix", "💶 Petit prix"], ["enfant", "🧒 Enfants"], ["
 async function menuSheet() {
   await loadScript("./budget/courses.js"); const R = window.Courses;
   const cfg = Object.assign({ store: "leclerc", repas: 7, adultes: 2, enfants: 1, budget: 60, styles: ["petitprix", "enfant"], exclus: [], basics: false, seed: 1 }, lsGet("budget_coursesCfg", {}));
+  const ch = chainOf(lsGet("pb-store", null)); if (ch) cfg.store = ch;
   let res = null;
   const { el, close } = sheet(`<h2>Menu de la semaine</h2>
+    <div class="seg3 two" role="tablist"><button class="on" role="tab" aria-selected="true">✨ Proposé pour moi</button><button role="tab" aria-selected="false" id="m_pick">✋ Je choisis mes recettes</button></div>
     <div class="stepper"><span>Repas à prévoir</span><button type="button" data-k="repas:-1" aria-label="Moins">−</button><b id="v_repas">${cfg.repas}</b><button type="button" data-k="repas:1" aria-label="Plus">＋</button></div>
     <div class="stepper"><span>Adultes</span><button type="button" data-k="adultes:-1" aria-label="Moins">−</button><b id="v_adultes">${cfg.adultes}</b><button type="button" data-k="adultes:1" aria-label="Plus">＋</button></div>
     <div class="stepper"><span>Enfants</span><button type="button" data-k="enfants:-1" aria-label="Moins">−</button><b id="v_enfants">${cfg.enfants}</b><button type="button" data-k="enfants:1" aria-label="Plus">＋</button></div>
     <div class="chips mt">${STYLES.map(([k, l]) => `<button class="chip ${cfg.styles.includes(k) ? "on" : ""}" data-sty="${k}" aria-pressed="${cfg.styles.includes(k)}">${l}</button>`).join("")}</div>
     <label class="f" for="m_st">Magasin (pour estimer le prix)</label><select id="m_st">${R.STORES.map(([id, n]) => `<option value="${id}" ${id === cfg.store ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
     <button class="btn full mt" id="m_go">Proposer un menu</button><div id="m_res"></div>`);
+  el.querySelector("#m_pick").onclick = () => { close(); pickSheet(cfg); };
   el.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { const [k, d] = b.dataset.k.split(":"); const lim = { repas: [2, 14], adultes: [1, 6], enfants: [0, 6] }[k]; cfg[k] = Math.max(lim[0], Math.min(lim[1], cfg[k] + +d)); el.querySelector("#v_" + k).textContent = cfg[k]; });
   el.querySelectorAll("[data-sty]").forEach(b => b.onclick = () => { const k = b.dataset.sty, i = cfg.styles.indexOf(k); if (i >= 0) cfg.styles.splice(i, 1); else cfg.styles.push(k); b.classList.toggle("on", i < 0); b.setAttribute("aria-pressed", i < 0); });
   const run = extra => {
@@ -386,7 +397,7 @@ function guided(steps) {
 }
 
 /* ---------- Recettes du monde (TheMealDB, traduites) ---------- */
-async function worldSheet() {
+async function worldSheet(pick) {
   await loadScript("./budget/courses.js").catch(() => {});
   const { el } = sheet(`<h2>🌍 Recettes du monde</h2><p class="sub">Plus de 300 recettes TheMealDB, traduites en français sur ton téléphone.</p>
     <form id="w_f" class="addbar"><input id="w_q" placeholder="ex. poulet, lentilles, curry…" autocomplete="off" aria-label="Rechercher une recette"><button class="btn icon" aria-label="Rechercher">🔎</button></form>
@@ -396,23 +407,24 @@ async function worldSheet() {
     res.innerHTML = `<p class="sub">Recherche…</p>`;
     try {
       const list = await p; if (!list.length) { res.innerHTML = `<p class="sub">Aucune recette pour « ${esc(label)} ».</p>`; return; }
-      res.innerHTML = `<p class="sub">Traduction des titres…</p>`;
-      const fr = await frTitles(list.slice(0, 24));
-      res.innerHTML = `<div class="wgrid">${fr.map(m => `<button class="wcard" data-wid="${m.idMeal}"><img src="${esc(m.strMealThumb)}/small" alt="" loading="lazy"><span>${esc(m.fr)}</span></button>`).join("")}</div>${list.length > 24 ? `<p class="sub">24 premières sur ${list.length}. Affine ta recherche.</p>` : ""}`;
-      res.querySelectorAll("[data-wid]").forEach(b => b.onclick = () => worldRecipe(b.dataset.wid));
+      const shown = list.slice(0, 24), tok = (show.tok = (show.tok || 0) + 1);
+      res.innerHTML = `<p class="sub" id="w_tr">${shown.length} recettes · traduction des titres en cours…</p><div class="wgrid">${shown.map(m => `<button class="wcard" data-wid="${m.idMeal}"><img src="${esc(m.strMealThumb)}/small" alt="" loading="lazy"><span>${esc(m.strMeal)}</span></button>`).join("")}</div>${list.length > 24 ? `<p class="sub">24 premières sur ${list.length}. Affine ta recherche.</p>` : ""}`;
+      res.querySelectorAll("[data-wid]").forEach(b => b.onclick = () => worldRecipe(b.dataset.wid, null, pick));
+      frTitles(shown, (id, t) => { if (tok !== show.tok) return; const sp = res.querySelector(`[data-wid="${id}"] span`); if (sp) sp.textContent = t; })
+        .then(r => { const t = res.querySelector("#w_tr"); if (t && tok === show.tok) t.textContent = r.translated >= r.total ? `${r.total} recettes` : `${r.total} recettes · ${r.total - r.translated} titres restés en anglais (traducteur en ligne saturé) : la fiche sera traduite à l'ouverture`; });
     } catch (e) { res.innerHTML = `<p class="err">${esc(C.ctx.errText(e))}</p>`; }
   };
   el.querySelectorAll("[data-wc]").forEach(b => b.onclick = () => { el.querySelectorAll("[data-wc]").forEach(x => x.classList.toggle("on", x === b)); show(byCategory(b.dataset.wc), b.textContent); });
   el.querySelector("#w_f").onsubmit = e => { e.preventDefault(); const q = el.querySelector("#w_q").value.trim(); if (q) show(wSearch(q), q); };
 }
 
-async function worldRecipe(id, inMenu) {
-  const { el, close } = sheet(`<div id="wr"><h2>Chargement…</h2><p class="sub" id="wr_s">La première traduction télécharge le traducteur français (environ 30 Mo, une seule fois).</p></div>`);
+async function worldRecipe(id, inMenu, pick) {
+  const { el, close } = sheet(`<div id="wr"><h2>Chargement…</h2><p class="sub" id="wr_s">Récupération de la recette…</p></div>`);
   let r;
   try { r = await recipeFR(id, t => { const s = el.querySelector("#wr_s"); if (s) s.textContent = t; }); }
   catch (e) { el.querySelector("#wr").innerHTML = `<h2>Recette indisponible</h2><p class="err">${esc(C.ctx.errText(e))}</p>`; return; }
   const menu = lsGet("budget_coursesMenu", []) || [], already = menu.some(m => m.ext && m.ext.id === r.id);
-  el.querySelector("#wr").innerHTML = `<img class="wimg" src="${esc(r.img)}" alt=""><h2>${esc(r.title)}</h2><p class="sub">${esc([r.cat, r.area].filter(Boolean).join(" · "))} · pour 4 personnes environ</p>
+  el.querySelector("#wr").innerHTML = `${r.untranslated ? `<div class="pchip"><span>⚠️ Recette affichée en anglais : ${esc(r.untranslated)} Pour traduire sans limite, télécharge le traducteur dans <b>Plus → Traducteur hors ligne</b>.</span></div>` : ""}<img class="wimg" src="${esc(r.img)}" alt=""><h2>${esc(r.title)}</h2><p class="sub">${esc([r.cat, r.area].filter(Boolean).join(" · "))} · pour 4 personnes environ</p>
     <div id="wr_cost" class="pricehint"><span class="sub">Calcul du coût avec les prix relevés…</span></div>
     <h3>Ingrédients</h3><ul class="ing">${r.ingredients.map(x => `<li>${/^[\d,]+$/.test(x.measure || "") ? `${esc(x.measure)} ${esc(x.name.toLowerCase())}` : `${esc(x.name)}${x.measure ? ` <span class="sub">· ${esc(x.measure)}</span>` : ""}`}</li>`).join("")}</ul>
     <h3>Préparation</h3><ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>
@@ -421,11 +433,79 @@ async function worldRecipe(id, inMenu) {
   const st = lsGet("pb-store", null);
   recipeCost(r, st && (st.brand || st.name)).then(c => { const b = el.querySelector("#wr_cost"); if (!b) return; b.innerHTML = c.priced >= 3 && c.priced / c.total >= 0.3 ? `<span class="sub">≈ <b>${eur(c.cost, 2)}</b> d'après les prix relevés (Open Prices) de ${c.priced} ingrédients sur ${c.total} ; épices et placard non comptés.</span>` : `<span class="sub">Pas assez de prix relevés pour chiffrer cette recette (${c.priced}/${c.total} ingrédients). Les prix réels apparaîtront en magasin.</span>`; }).catch(() => {});
   const keep = { id: r.id, title: r.title, img: r.img, steps: r.steps, ingredients: r.ingredients };
-  if (el.querySelector("#wr_add")) el.querySelector("#wr_add").onclick = () => { budgetSave("coursesMenu", [...menu, { ext: keep }]); C.ctx.toast("Ajoutée au menu"); close(); draw(); };
+  if (el.querySelector("#wr_add")) el.querySelector("#wr_add").onclick = () => { if (pick) { pick({ ext: keep }); close(); return; } budgetSave("coursesMenu", [...menu, { ext: keep }]); C.ctx.toast("Ajoutée au menu"); close(); draw(); };
   if (el.querySelector("#wr_out")) el.querySelector("#wr_out").onclick = () => { budgetSave("coursesMenu", menu.filter(m => !(m.ext && m.ext.id === r.id))); close(); draw(); };
   el.querySelector("#wr_list").onclick = async () => {
     const skip = /^(sel|poivre|eau|huile|huile d'olive)$/i;
     await addToList(C.ctx, r.ingredients.filter(x => !skip.test(x.name)).map(x => ({ name: x.name, qty: x.measure && x.measure !== "selon le goût" ? x.measure : "" })));
     close();
   };
+}
+
+/* ---------- Enseigne du magasin (écarts de prix UFC-Que Choisir 2026) ---------- */
+const CHAINS = [[/lidl/i, "lidl"], [/leclerc/i, "leclerc"], [/aldi/i, "aldi"], [/netto/i, "netto"], [/hyper\s*u/i, "hyperu"], [/super\s*u|u express|magasin u|\bu\b/i, "superu"], [/intermarch/i, "intersuper"], [/carrefour\s*market|market/i, "market"], [/carrefour/i, "carrefourhyper"], [/auchan/i, "auchan"]];
+export const chainOf = st => { const n = `${(st && st.brand) || ""} ${(st && st.name) || ""}`; const c = CHAINS.find(([re]) => re.test(n)); return c ? c[1] : null; };
+const chainName = st => { const id = chainOf(st), R = window.Courses; return id && R ? R.STORES.find(x => x[0] === id)[1] : (st.brand || st.name); };
+
+/* ---------- Partager un ticket sur Open Prices ---------- */
+function shareTicket(extra = {}) {
+  const acc = opAccount(), st = lsGet("pb-store", null);
+  const { el, close } = sheet(`<h2>🧾 Partager un ticket</h2>
+    <p class="hint">La photo est ajoutée à Open Prices : les bénévoles et l'outil de lecture en tirent les prix de chaque article, utilisables ensuite par l'appli et par tous.</p>
+    <div class="pchip"><span>⚠️ <b>La photo devient publique.</b> Plie ou cache le bas du ticket (numéro de carte, nom, carte de fidélité) avant de photographier.</span></div>
+    ${acc ? `<p class="sub mt">Compte Open Food Facts : <b>${esc(acc.user)}</b></p>` : `<p class="sub mt">Il faut un compte Open Food Facts (gratuit, sur openfoodfacts.org).</p>
+      <label class="f" for="o_u">Identifiant Open Food Facts</label><input id="o_u" autocomplete="username">
+      <label class="f" for="o_p">Mot de passe</label><input id="o_p" type="password" autocomplete="current-password">
+      <p class="sub">Le mot de passe sert une seule fois à ouvrir la session ; il n'est pas enregistré.</p>`}
+    <p class="sub">Magasin : ${st ? esc(st.name) : "<b>non choisi</b> (choisis-le dans « En magasin » pour que les prix soient bien localisés)"}</p>
+    <label class="f" for="o_d">Date du ticket</label><input id="o_d" type="date" value="${isoToday()}">
+    <label class="btn full mt" for="o_f">📷 Prendre ou choisir la photo</label><input id="o_f" type="file" accept="image/*" capture="environment" hidden>
+    <div id="o_msg" class="sub mt" aria-live="polite"></div>`);
+  el.querySelector("#o_f").onchange = async e => {
+    const file = e.target.files[0], msg = el.querySelector("#o_msg"); if (!file) return;
+    try {
+      if (!opAccount()) { msg.textContent = "Connexion…"; await opLogin(el.querySelector("#o_u").value, el.querySelector("#o_p").value); }
+      msg.textContent = "Envoi de la photo…";
+      await uploadReceipt(file, { store: st, date: el.querySelector("#o_d").value || isoToday(), total: extra.total, count: extra.count });
+      close(); C.ctx.toast("Merci ! Ticket envoyé à Open Prices");
+    } catch (err) { msg.innerHTML = `<span class="err">${esc(err.message)}</span>`; e.target.value = ""; }
+  };
+}
+
+/* ---------- Choisir soi-même ses recettes ---------- */
+async function pickSheet(cfg) {
+  await loadScript("./budget/courses.js"); const R = window.Courses;
+  const sel = (lsGet("budget_coursesMenu", []) || []).map(m => ({ ...m }));
+  const has = id => sel.findIndex(m => m.id === id);
+  const { el, close } = sheet(`<h2>Je choisis mes recettes</h2>
+    <div class="addbar"><input id="k_q" placeholder="Filtrer : pâtes, poulet, rapide…" autocomplete="off" aria-label="Filtrer les recettes"></div>
+    <div class="chips">${STYLES.map(([k, l]) => `<button class="chip" data-kf="${k}">${l}</button>`).join("")}</div>
+    <div id="k_sel" class="planlive"></div>
+    <div id="k_list"></div>
+    <button class="btn ghost full mt" id="k_world">🌍 Ajouter une recette du monde</button>
+    <div class="row sticky-actions"><button class="btn" id="k_ok">Valider le menu</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  let filt = "", tag = "";
+  const cost = r => { const idx = (R.STORES.find(s => s[0] === cfg.store) || R.STORES[1])[2], k = cfg.adultes + 0.5 * cfg.enfants; let c = 0; for (const [i, q] of Object.entries(r.ing)) { const d = R.ING[i]; if (d && !d[6]) c += q * k / d[3] * d[5] * idx; } return c; };
+  const draw2 = () => {
+    const n = sel.reduce((a, m) => a + (m.batch ? 2 : 1), 0);
+    el.querySelector("#k_sel").innerHTML = `<span>${sel.length ? sel.map(m => (m.ext ? "🌍 " + m.ext.title : R.R.find(x => x.id === m.id).emo + " " + R.R.find(x => x.id === m.id).nom) + (m.batch ? " ×2" : "")).join(" · ") : "Aucune recette choisie"}</span><b>${n} repas</b>`;
+    const list = R.R.filter(r => (!filt || (r.nom + " " + Object.keys(r.ing).map(i => (R.ING[i] || [""])[0]).join(" ")).toLowerCase().includes(filt)) && (!tag || r.tags.includes(tag) || (tag === "rapide" && r.min <= 30) || (tag === "petitprix" && cost(r) < 6)));
+    el.querySelector("#k_list").innerHTML = list.map(r => { const i = has(r.id), m = sel[i]; return `<div class="pick ${i >= 0 ? "on" : ""}"><button class="pm" data-kt="${r.id}"><span class="ic">${r.emo}</span><span class="tx"><b>${esc(r.nom)}</b><small>${r.min} min · ≈ ${eur(cost(r), 2)} le repas (estimé)</small></span><span class="ck" aria-hidden="true">${i >= 0 ? "✓" : "＋"}</span></button>${i >= 0 && r.tags.includes("batch") ? `<label class="sw sm"><input type="checkbox" data-kb="${r.id}" ${m.batch ? "checked" : ""}> double portion (2 repas)</label>` : ""}</div>`; }).join("") || `<p class="sub">Aucune recette ne correspond.</p>`;
+    el.querySelectorAll("[data-kt]").forEach(b => b.onclick = () => { const i = has(b.dataset.kt); if (i >= 0) sel.splice(i, 1); else sel.push({ id: b.dataset.kt, batch: false }); draw2(); });
+    el.querySelectorAll("[data-kb]").forEach(c => c.onchange = () => { sel[has(c.dataset.kb)].batch = c.checked; draw2(); });
+  };
+  el.querySelector("#k_q").oninput = e => { filt = e.target.value.trim().toLowerCase(); draw2(); };
+  el.querySelectorAll("[data-kf]").forEach(b => b.onclick = () => { tag = tag === b.dataset.kf ? "" : b.dataset.kf; el.querySelectorAll("[data-kf]").forEach(x => x.classList.toggle("on", x.dataset.kf === tag)); draw2(); });
+  el.querySelector("#k_world").onclick = () => worldSheet(m => { if (!sel.some(x => x.ext && x.ext.id === m.ext.id)) sel.push(m); C.ctx.toast("Recette ajoutée à ta sélection"); draw2(); });
+  el.querySelector("#k_ok").onclick = async () => {
+    if (!sel.length) return C.ctx.toast("Choisis au moins une recette");
+    budgetSave("coursesCfg", cfg); budgetSave("coursesMenu", sel); close();
+    const base = sel.filter(m => !m.ext), stock = lsGet("pb-stock-ing", []);
+    const lines = base.length ? R.shopping(base, cfg.adultes + 0.5 * cfg.enfants, {}, 1, {}).filter(l => !l.placard && !stock.includes(l.id)) : [];
+    const skip = /^(sel|poivre|eau|huile|huile d'olive)$/i;
+    const world = sel.filter(m => m.ext).flatMap(m => m.ext.ingredients.filter(x => !skip.test(x.name)).map(x => ({ name: x.name, qty: x.measure && x.measure !== "selon le goût" ? x.measure : "" })));
+    await addToList(C.ctx, [...lines.map(l => ({ name: l.nom, qty: `${l.packs} × ${l.pack}`, rayon: { "Placard": "Épicerie salée" }[l.rayon] || l.rayon })), ...world]);
+    draw();
+  };
+  draw2();
 }

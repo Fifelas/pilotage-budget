@@ -41,28 +41,39 @@ function measureFR(m) {
 const grams = (m, ingId) => { const s = String(m || "").toLowerCase(), n = parseFloat(s.replace(",", ".")) || 1; if (/kg/.test(s)) return n * 1000; if (/\bg\b|gram/.test(s)) return n; if (/lb|pound/.test(s)) return n * 453; if (/oz/.test(s)) return n * 28; if (/cup/.test(s)) return n * 200; if (/ml/.test(s)) return n; if (/tbsp|tablespoon/.test(s)) return n * 15; if (/tsp|teaspoon/.test(s)) return n * 5; return { oeufs: 1, ail: 1, citron: 1, poivrons: 1, salade: 1 }[ingId] != null ? n : n * 120; };
 
 /* ---------- Traduction ---------- */
-let mlReady = null;
-async function mlkit() {
-  if (!Capacitor.isNativePlatform()) return null;
-  if (!mlReady) mlReady = (async () => { const { Translation, Language } = await import("@capacitor-mlkit/translation"); await Translation.downloadModel({ language: Language.French }); await Translation.downloadModel({ language: Language.English }); return { Translation, Language }; })().catch(e => { mlReady = null; throw e; });
-  return mlReady;
+// Téléphone : ML Kit hors ligne si le traducteur français est téléchargé (bouton dans Plus, ≈ 30 Mo).
+// Sinon (ou sur ordinateur) : service MyMemory en ligne. Jamais de blocage : délai maximum puis texte d'origine.
+const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, ko) => setTimeout(() => ko(new Error(msg)), ms))]);
+async function ml() { if (!Capacitor.isNativePlatform()) return null; try { return await import("@capacitor-mlkit/translation"); } catch { return null; } }
+export async function translatorStatus() {
+  const m = await ml(); if (!m) return { native: false };
+  try { const { languages } = await withTimeout(m.Translation.getDownloadedModels(), 5000, "délai"); const has = languages || []; return { native: true, ready: has.includes("fr") }; }
+  catch { return { native: true, ready: false }; }
+}
+export async function downloadTranslator() {
+  const m = await ml(); if (!m) throw new Error("Disponible seulement dans l'appli Android.");
+  await withTimeout(m.Translation.downloadModel({ language: m.Language.French }), 180000, "Téléchargement trop long : réessaie avec une meilleure connexion.");
+}
+async function viaMyMemory(t, from, to) {
+  const parts = t.match(/[^.!?]+[.!?]*\s*/g) || [t], chunks = []; let cur = "";
+  for (const p of parts) { if ((cur + p).length > 450 && cur) { chunks.push(cur); cur = ""; } cur += p; } if (cur) chunks.push(cur);
+  let res = "";
+  for (const c of chunks) {
+    const r = await withTimeout(fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(c)}&langpair=${from}|${to}`).then(r => r.json()), 12000, "Traduction trop lente");
+    if (r.quotaFinished || r.responseStatus !== 200) throw new Error("Quota du traducteur en ligne atteint pour aujourd'hui. Télécharge le traducteur hors ligne dans Plus.");
+    res += r.responseData.translatedText + " ";
+  }
+  return res.trim();
 }
 export async function translate(texts, from = "en", to = "fr") {
-  const out = [];
-  const ml = await mlkit().catch(() => null);
+  const st = await translatorStatus(), m = st.ready ? await ml() : null, out = [];
   for (const t of texts) {
     if (!t || !t.trim()) { out.push(t); continue; }
-    if (ml) { const r = await ml.Translation.translate({ text: t, sourceLanguage: from === "en" ? ml.Language.English : ml.Language.French, targetLanguage: to === "fr" ? ml.Language.French : ml.Language.English }); out.push(r.text); continue; }
-    // Ordinateur : MyMemory (gratuit, ~5000 caractères par jour) par morceaux de 450 caractères
-    const parts = t.match(/[^.!?]+[.!?]*\s*/g) || [t], chunks = []; let cur = "";
-    for (const p of parts) { if ((cur + p).length > 450 && cur) { chunks.push(cur); cur = ""; } cur += p; } if (cur) chunks.push(cur);
-    let res = "";
-    for (const c of chunks) {
-      const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(c)}&langpair=${from}|${to}`).then(r => r.json());
-      if (r.quotaFinished || r.responseStatus !== 200) throw new Error("Quota de traduction atteint pour aujourd'hui sur ordinateur : réessaie demain ou depuis l'appli Android.");
-      res += r.responseData.translatedText + " ";
+    if (m) {
+      try { const r = await withTimeout(m.Translation.translate({ text: t, sourceLanguage: from === "en" ? m.Language.English : m.Language.French, targetLanguage: to === "fr" ? m.Language.French : m.Language.English }), 15000, "délai"); out.push(r.text); continue; }
+      catch { /* bascule en ligne */ }
     }
-    out.push(res.trim());
+    out.push(await viaMyMemory(t, from, to));
   }
   return out;
 }
@@ -79,19 +90,24 @@ export async function search(qFr) {
   const seen = new Set(); return [...a, ...b].filter(m => !seen.has(m.idMeal) && seen.add(m.idMeal)).slice(0, 40);
 }
 
-// Titres traduits en lot, gardés sur le téléphone
+// Titres traduits petit à petit (6 à la fois), gardés sur le téléphone ; onEach(id, titre) à chaque titre prêt
 const TT = "pb-mdb-titles";
-export async function frTitles(meals) {
+export async function frTitles(meals, onEach) {
   let cache = {}; try { cache = JSON.parse(localStorage.getItem(TT)) || {}; } catch {}
-  const miss = meals.filter(m => !cache[m.idMeal]).slice(0, 25);
+  const save = () => { try { localStorage.setItem(TT, JSON.stringify(cache)); } catch {} };
+  for (const m of meals) if (cache[m.idMeal] && onEach) onEach(m.idMeal, cache[m.idMeal]);
+  let miss = meals.filter(m => !cache[m.idMeal]);
   if (miss.length) {
-    const { data } = await sb.from("recipe_translations").select("source_id, data").eq("source", "themealdb").eq("lang", "fr").in("source_id", miss.map(m => m.idMeal));
-    for (const d of data || []) cache[d.source_id] = d.data.title;
-    const still = miss.filter(m => !cache[m.idMeal]);
-    if (still.length) { try { const t = await translate(still.map(m => m.strMeal)); still.forEach((m, i) => { cache[m.idMeal] = t[i]; }); } catch { /* titres en anglais */ } }
-    try { localStorage.setItem(TT, JSON.stringify(cache)); } catch {}
+    try { const { data } = await sb.from("recipe_translations").select("source_id, data").eq("source", "themealdb").eq("lang", "fr").in("source_id", miss.map(m => m.idMeal)); for (const d of data || []) { cache[d.source_id] = d.data.title; onEach && onEach(d.source_id, d.data.title); } } catch {}
+    miss = miss.filter(m => !cache[m.idMeal]);
+    let ok = 0; const queue = miss.slice();
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      while (queue.length) { const m = queue.shift(); try { const [t] = await withTimeout(translate([m.strMeal]), 15000, "délai"); cache[m.idMeal] = t; ok++; onEach && onEach(m.idMeal, t); } catch { /* reste en anglais */ } }
+    }));
+    save();
+    return { translated: meals.length - miss.length + ok, total: meals.length };
   }
-  return meals.map(m => ({ ...m, fr: cache[m.idMeal] || m.strMeal }));
+  return { translated: meals.length, total: meals.length };
 }
 
 // Recette complète traduite (cache foyer Supabase → sinon traduction et enregistrement)
@@ -104,13 +120,16 @@ export async function recipeFR(id, onStep) {
   const steps = String(m.strInstructions || "").split(/\r?\n+/).map(s => s.replace(/^\s*(step\s*\d+[:.)]?|\d+[.)])\s*/i, "").trim()).filter(s => s.length > 3);
   const unknown = ings.filter(x => !lookup(x.en));
   onStep && onStep("Traduction de la recette…");
-  const tr = await translate([m.strMeal, ...unknown.map(x => x.en), ...steps]);
+  let tr, failed = null;
+  try { tr = await withTimeout(translate([m.strMeal, ...unknown.map(x => x.en), ...steps]), 60000, "Traduction trop longue"); }
+  catch (e) { failed = e.message; tr = [m.strMeal, ...unknown.map(x => x.en), ...steps]; }
   const title = tr[0], unk = tr.slice(1, 1 + unknown.length), st = tr.slice(1 + unknown.length);
   const out = {
     v: 2, id: String(m.idMeal), title, en: m.strMeal, img: m.strMealThumb, cat: (CATS.find(c => c[0] === m.strCategory) || [0, m.strCategory])[1], area: AREA[m.strArea] || m.strArea || "",
     ingredients: ings.map(x => { const l = lookup(x.en); const fr = l ? l.fr : unk[unknown.indexOf(x)] || x.en; return { name: fr[0].toUpperCase() + fr.slice(1), measure: measureFR(x.measure), ing: l ? l.ing : null, g: l && l.ing ? grams(x.measure, l.ing) : null }; }),
     steps: st, source: m.strSource || "", youtube: m.strYoutube || ""
   };
+  if (failed) return { ...out, untranslated: failed };
   await sb.from("recipe_translations").upsert({ source: "themealdb", source_id: out.id, lang: "fr", data: out }, { onConflict: "source,source_id,lang", ignoreDuplicates: true }).then(() => {}, () => {});
   return out;
 }
