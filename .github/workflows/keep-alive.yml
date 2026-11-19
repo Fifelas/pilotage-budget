@@ -1,0 +1,14 @@
+# Interroge la base chaque jour : un projet Supabase gratuit est mis en pause après 7 jours sans activité
+name: Garder Supabase actif
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsS -X POST "https://ibqxfpqgxssaycyrkoca.supabase.co/rest/v1/rpc/ping" \
+            -H "apikey: sb_publishable_-5bTBqnwTvttS4XJLAjO4A_0lsjeu9b" \
+            -H "Content-Type: application/json" -d '{}'

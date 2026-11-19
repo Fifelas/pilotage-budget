@@ -1,0 +1,6 @@
+{
+  "appId": "fr.fifelas.pilotagebudget",
+  "appName": "Pilotage budget",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}
