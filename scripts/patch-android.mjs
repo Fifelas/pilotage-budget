@@ -1,6 +1,10 @@
-// Ajoute au projet Android généré (npx cap add android) le lecteur de notifications bancaires.
+// Complète le projet Android généré (npx cap add android).
+// La lecture des notifications bancaires est DÉSACTIVÉE par défaut : depuis 2025, Google Play Protect
+// (« protection renforcée contre la fraude ») bloque l'installation hors Play Store des applis qui la demandent.
+// Pour l'activer quand même (installation par câble USB / adb) : variable BANK_NOTIF=1 dans le workflow.
 import fs from "node:fs";
 import path from "node:path";
+if (process.env.BANK_NOTIF !== "1") { console.log("Lecture des notifications bancaires non incluse (compatible Play Protect)."); process.exit(0); }
 const pkgDir = "android/app/src/main/java/fr/fifelas/pilotagebudget";
 fs.mkdirSync(pkgDir, { recursive: true });
 for (const f of fs.readdirSync("native/java")) fs.copyFileSync(path.join("native/java", f), path.join(pkgDir, f));
@@ -13,4 +17,4 @@ if (!x.includes("BankNotificationService")) {
     </application>`);
   fs.writeFileSync(mf, x);
 }
-console.log("Projet Android complété : lecteur de notifications bancaires ajouté.");
+console.log("Lecture des notifications bancaires ajoutée.");
