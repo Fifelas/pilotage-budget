@@ -1,6 +1,6 @@
 // Pilotage budget — application (version ordi et APK Android, même code)
 import { sb } from "./supabase.js";
-import { APP_VERSION, LEGACY_URL } from "./config.js";
+import { APP_VERSION } from "./config.js";
 import { checkUpdate, openUrl } from "./update.js";
 
 const $app = document.getElementById("app");
@@ -25,7 +25,7 @@ async function boot() {
   S.session = data.session;
   sb.auth.onAuthStateChange((_e, session) => { const had = !!S.session; S.session = session; if (!!session !== had) route(); });
   route();
-  checkUpdate().then(u => { if (u) { S.update = u; if (S.household) render(); } });
+  checkUpdate().then(u => { if (u) { S.update = u; drawUpdate(); } });
 }
 
 async function route() {
@@ -114,31 +114,76 @@ function renderJoin(msg = "") {
 }
 
 /* ---------------- Application ---------------- */
+// Le budget (relevés, paie, prêt, menus…) est le module « budget/index.html », affiché dans un cadre.
+// Ses données restent dans le stockage de CET appareil. La liste de courses et le foyer sont dans Supabase.
 const TABS = [["accueil","🏠","Accueil"],["mois","📅","Ce mois"],["courses","🛒","Courses"],["eco","💰","Économies"],["pret","🏡","Prêt"],["plus","☰","Plus"]];
+const FRAME_TABS = { accueil: "accueil", mois: "mois", eco: "eco", pret: "pret" };
+const SUBS = {
+  courses: [["liste","Liste partagée"],["menus","Menus & recettes"]],
+  plus: [["foyer","Foyer & compte"],["comptes","Relevés & import"],["operations","Opérations"],["recurrents","Prélèvements"],["categories","Catégories"],["paieT","Fiche de paie"]]
+};
+const SUB_FRAME = { menus: ["courses"], comptes: ["plus","comptes"], operations: ["plus","operations"], recurrents: ["plus","recurrents"], categories: ["plus","categories"], paieT: ["plus","paieT"] };
+S.sub = { courses: "liste", plus: "foyer" };
 
 function render() {
+  try { localStorage.setItem("pb-name", S.me.display_name || ""); } catch {}
   const first = (S.me.display_name || S.session.user.email || "?").trim();
-  $app.innerHTML = `<header class="top"><div class="av">${esc(first[0].toUpperCase())}</div><div><h1>Bonjour ${esc(first)}</h1><div class="sub">${esc(S.household.name)} · ${S.members.length} membre${S.members.length>1?"s":""}</div></div></header>
-    <nav class="bottom" aria-label="Rubriques">${TABS.map(([k,i,l]) => `<button data-t="${k}" class="${S.tab===k?"on":""}"><span class="i">${i}</span>${l}</button>`).join("")}</nav>
-    <main id="main"></main>`;
-  document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { S.tab = b.dataset.t; render(); window.scrollTo({ top: 0 }); });
-  const main = document.getElementById("main");
-  const upd = S.update ? `<div class="banner"><b>🆕 Version ${esc(S.update.version)} disponible</b><button class="btn" id="upd">Installer</button></div>` : "";
-  main.innerHTML = upd + (VIEWS[S.tab] || VIEWS.accueil)();
-  if (S.update) document.getElementById("upd").onclick = () => openUrl(S.update.url);
-  (AFTER[S.tab] || (() => {}))();
+  $app.innerHTML = `<header class="top" id="hdr"><div class="av">${esc(first[0].toUpperCase())}</div><div><h1>Bonjour ${esc(first)}</h1><div class="sub">${esc(S.household.name)} · ${S.members.length} membre${S.members.length>1?"s":""}</div></div></header>
+    <nav class="bottom" aria-label="Rubriques">${TABS.map(([k,i,l]) => `<button data-t="${k}"><span class="i">${i}</span>${l}</button>`).join("")}</nav>
+    <div id="updbar"></div><div class="subtabs" id="subtabs"></div>
+    <main id="main"></main>
+    <div id="frame" hidden><iframe id="budget" title="Budget" src="./budget/index.html?embed=1#g=accueil"></iframe></div>`;
+  document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => show(b.dataset.t));
+  window.onresize = sizeFrame;
+  drawUpdate(); show(S.tab);
 }
 
-const migr = (titre, txt) => `<section><div class="card"><h2>${titre}</h2><p class="hint">${txt}</p>
-  <p class="hint">En attendant, tout fonctionne dans la version actuelle sur Claude.</p><button class="btn ghost" data-legacy>Ouvrir la version actuelle</button></div></section>`;
+function drawUpdate() {
+  const el = document.getElementById("updbar"); if (!el) return;
+  el.innerHTML = S.update ? `<div class="banner" style="margin:8px 14px"><b>🆕 Version ${esc(S.update.version)} disponible</b><button class="btn" id="upd">Installer</button></div>` : "";
+  if (S.update) document.getElementById("upd").onclick = () => openUrl(S.update.url);
+}
+
+function frameGo(g, s) {
+  const f = document.getElementById("budget"); if (!f) return;
+  const h = `g=${g}${s ? "&s=" + s : ""}`;
+  try { if (f.contentWindow && f.contentWindow.location.pathname.endsWith("/budget/index.html")) { f.contentWindow.location.hash = h; return; } } catch {}
+  f.src = `./budget/index.html?embed=1#${h}`;
+}
+function sizeFrame() {
+  const fr = document.getElementById("frame"); if (!fr || fr.hidden) return;
+  const top = fr.getBoundingClientRect().top + window.scrollY, nav = window.innerWidth < 1000 ? document.querySelector("nav.bottom").offsetHeight : 0;
+  fr.firstElementChild.style.height = Math.max(300, window.innerHeight - top - nav) + "px";
+}
+
+function show(tab, sub) {
+  S.tab = tab; if (sub) S.sub[tab] = sub;
+  document.querySelectorAll("[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
+  const st = document.getElementById("subtabs"), main = document.getElementById("main"), fr = document.getElementById("frame");
+  st.innerHTML = SUBS[tab] ? `<div class="pills">${SUBS[tab].map(([k,l]) => `<button data-s="${k}" class="${S.sub[tab]===k?"on":""}">${l}</button>`).join("")}</div>` : "";
+  st.querySelectorAll("[data-s]").forEach(b => b.onclick = () => show(tab, b.dataset.s));
+  const cur = SUBS[tab] ? S.sub[tab] : null;
+  const target = FRAME_TABS[tab] ? [FRAME_TABS[tab]] : (cur && SUB_FRAME[cur]);
+  if (target) {
+    main.hidden = true; main.innerHTML = ""; fr.hidden = false; frameGo(...target); sizeFrame();
+  } else {
+    fr.hidden = true; main.hidden = false;
+    main.innerHTML = (tab === "courses" ? VIEWS.courses() : VIEWS.plus());
+    (AFTER[tab] || (() => {}))();
+  }
+  window.scrollTo({ top: 0 });
+}
+// Le module budget signale sa rubrique (ex. un bouton « Importer mes données » qui ouvre « Plus »)
+window.addEventListener("message", e => {
+  const d = e.data || {}; if (!d.pbGroup || !S.household) return;
+  const map = { accueil: "accueil", mois: "mois", eco: "eco", pret: "pret" };
+  if (map[d.pbGroup] && S.tab !== map[d.pbGroup]) { S.tab = map[d.pbGroup]; document.querySelectorAll("[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t === S.tab)); document.getElementById("subtabs").innerHTML = ""; }
+  if (d.pbGroup === "plus" && S.tab !== "plus") { S.tab = "plus"; S.sub.plus = d.pbSection || "comptes"; document.querySelectorAll("[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t === "plus"));
+    const st = document.getElementById("subtabs"); st.innerHTML = `<div class="pills">${SUBS.plus.map(([k,l]) => `<button data-s="${k}" class="${S.sub.plus===k?"on":""}">${l}</button>`).join("")}</div>`; st.querySelectorAll("[data-s]").forEach(b => b.onclick = () => show("plus", b.dataset.s)); }
+  if (d.pbGroup === "courses" && S.tab !== "courses") { S.tab = "courses"; S.sub.courses = "menus"; document.querySelectorAll("[data-t]").forEach(b => b.classList.toggle("on", b.dataset.t === "courses")); }
+});
 
 const VIEWS = {
-  accueil: () => `<section><div class="hcard"><div class="l">Bienvenue dans la nouvelle appli</div><div class="big">${esc(S.household.name)}</div><div>Courses partagées en direct entre ${S.members.map(m => esc(m.display_name || "?")).join(" et ")}.</div></div>
-    <div class="grid2"><div class="card"><h2>🛒 Liste de courses</h2><p class="hint">${S.items.filter(i => !i.checked).length || "Aucun"} article${S.items.filter(i => !i.checked).length>1?"s":""} à acheter.</p><button class="btn" data-goto="courses">Ouvrir la liste</button></div>
-    <div class="card"><h2>🚧 En cours de migration</h2><p class="hint">Budget, relevés bancaires, prêt, menus et comparateur de prix arrivent étape par étape. Les relevés bancaires resteront uniquement sur ce téléphone.</p><button class="btn ghost" data-legacy>Version actuelle sur Claude</button></div></div></section>`,
-  mois: () => migr("📅 Ce mois-ci", "Enveloppes, prélèvements et reste à vivre : migration prévue avec l'import des relevés bancaires sur le téléphone."),
-  eco: () => migr("💰 Économies", "Plan d'épargne, actions à faire et dépenses évitables : migration prévue avec le budget."),
-  pret: () => migr("🏡 Prêt et projets", "Tableau d'amortissement, simulation de remboursement anticipé et projets : migration prévue avec le budget."),
   courses: () => `<section><div class="card"><h2>🛒 Liste de courses partagée</h2><p class="hint">Ce que l'un ajoute ou coche apparaît tout de suite sur le téléphone de l'autre.</p>
       <form id="add" class="row"><div style="flex:2 1 200px"><label class="f" for="in">Article</label><input id="in" placeholder="ex. Lait demi-écrémé" autocomplete="off" required></div>
         <div style="flex:1 1 90px"><label class="f" for="qt">Quantité</label><input id="qt" placeholder="ex. 2 L"></div>
@@ -151,8 +196,9 @@ const VIEWS = {
       <p class="hint" style="margin-top:12px">Membres : ${S.members.map(m => `${esc(m.display_name || "?")}${m.role==="admin"?" <span class=\"pill\">admin</span>":""}`).join(", ")}</p>
       <label class="f" for="mn">Mon prénom</label><div class="row"><input id="mn" value="${esc(S.me.display_name)}"><button class="btn ghost" id="mnsave" style="flex:0 0 auto">Enregistrer</button></div></div>
     <div class="card"><h2>⚙️ Compte et appli</h2><p class="hint">Connecté avec ${esc(S.session.user.email)}<br>Version ${esc(APP_VERSION)}</p>
+      <p class="hint">Tes relevés bancaires, bulletins de paie et ton prêt sont enregistrés uniquement sur cet appareil (rubrique « Relevés & import »). Pense à télécharger une sauvegarde de temps en temps.</p>
       <div class="row"><button class="btn ghost" id="chk">Vérifier les mises à jour</button><button class="btn danger" id="out">Se déconnecter</button></div><div id="chkmsg" class="sub" style="margin-top:8px"></div></div></div>
-    <p class="foot">Données de produits et de prix : Open Food Facts et Open Prices (licence ODbL). Cartes et magasins : © les contributeurs d'OpenStreetMap (ODbL). Recettes : TheMealDB.</p></section>`
+    <p class="foot">Données de produits et de prix : Open Food Facts et Open Prices (licence ODbL). Cartes et magasins : © les contributeurs d'OpenStreetMap (ODbL). Recettes : TheMealDB. Lecture des PDF : pdf.js (Mozilla) ; fichiers Excel : SheetJS.</p></section>`
 };
 
 const RAYONS = ["Fruits & légumes","Boucherie & volaille","Poissonnerie","Crèmerie & frais","Surgelés","Épicerie salée","Épicerie sucrée","Boissons","Boulangerie","Hygiène & maison","Bébé","Autres"];
@@ -160,8 +206,6 @@ const GUESS = [[/pomme|banane|carotte|salade|tomate|oignon|courgette|poireau|cit
 const guessRayon = n => { const g = GUESS.find(([re]) => re.test(n)); return g ? RAYONS[g[1]] : "Autres"; };
 
 const AFTER = {
-  accueil: () => { document.querySelectorAll("[data-goto]").forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); }); bindLegacy(); if (!S.channel) startList(); },
-  mois: bindLegacy, eco: bindLegacy, pret: bindLegacy,
   courses: () => {
     const inp = document.getElementById("in"), ry = document.getElementById("ry");
     inp.oninput = () => { ry.value = guessRayon(inp.value); };
@@ -186,11 +230,10 @@ const AFTER = {
       const m = document.getElementById("chkmsg"); m.textContent = "Recherche…";
       const u = await checkUpdate(); S.update = u;
       m.textContent = u ? `Version ${u.version} disponible.` : (window.Capacitor?.isNativePlatform?.() ? "Tu as la dernière version." : "Sur ordinateur, la page est toujours à jour.");
-      if (u) render();
+      drawUpdate();
     };
   }
 };
-function bindLegacy() { document.querySelectorAll("[data-legacy]").forEach(b => b.onclick = () => openUrl(LEGACY_URL)); }
 
 /* ---------------- Liste partagée en direct ---------------- */
 function upsertItem(it) { const i = S.items.findIndex(x => x.id === it.id); if (i >= 0) S.items[i] = it; else S.items.push(it); }
@@ -201,9 +244,9 @@ async function startList() {
   S.channel = sb.channel("liste-" + S.household.id)
     .on("postgres_changes", { event: "*", schema: "public", table: "shopping_items", filter: `household_id=eq.${S.household.id}` }, p => {
       if (p.eventType === "DELETE") S.items = S.items.filter(x => x.id !== p.old.id); else upsertItem(p.new);
-      if (S.tab === "courses") drawList();
+      drawList();
     }).subscribe();
-  if (S.tab === "courses") drawList();
+  drawList();
 }
 function stopList() { if (S.channel) { sb.removeChannel(S.channel); S.channel = null; } }
 

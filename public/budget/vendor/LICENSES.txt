@@ -1,0 +1,2 @@
+pdf.js 3.11.174 (Mozilla) — Apache License 2.0 — https://github.com/mozilla/pdf.js
+SheetJS xlsx 0.18.5 — Apache License 2.0 — https://sheetjs.com

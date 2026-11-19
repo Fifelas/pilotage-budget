@@ -73,3 +73,13 @@ section{animation:in .2s ease}@keyframes in{from{opacity:0;transform:translateY(
 @media (prefers-reduced-motion:reduce){section{animation:none}}
 .foot{font-size:12px;color:var(--muted);margin:24px 4px}
 .foot a{color:var(--pri)}
+/* sous-rubriques et cadre du module budget */
+.subtabs{max-width:980px;margin:auto;padding:0 14px}
+.pills{display:flex;gap:8px;overflow-x:auto;padding:8px 0 4px;scrollbar-width:none}
+.pills::-webkit-scrollbar{display:none}
+.pills button{flex:none;border:1.5px solid var(--field-line);background:var(--card);color:var(--ink2);padding:9px 15px;border-radius:999px;font-family:inherit;font-weight:600;font-size:13.5px;cursor:pointer;min-height:40px}
+.pills button.on{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border-color:transparent}
+#frame{max-width:1320px;margin:auto}
+#frame iframe{display:block;width:100%;border:0;background:var(--bg)}
+body:has(#frame:not([hidden])){padding-bottom:0}
+@media(min-width:1000px){.subtabs{max-width:1200px;padding:0 32px}#frame{padding:0 18px}}

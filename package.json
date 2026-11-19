@@ -1,6 +1,6 @@
 {
   "name": "pilotage-budget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Pilotage budget — appli Android et web du foyer (budget, courses, prix, recettes)",
