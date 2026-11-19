@@ -1,6 +1,6 @@
 {
   "name": "pilotage-budget",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Pilotage budget — appli Android et web du foyer (budget, courses, prix, recettes)",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "^8.2.2",
+    "@capacitor-mlkit/translation": "^8.2.2",
     "@capacitor/android": "^8.6.2",
     "@capacitor/app": "^8.1.2",
     "@capacitor/browser": "^8.0.5",

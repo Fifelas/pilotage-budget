@@ -1323,15 +1323,21 @@ function renderTravaux(){
   document.getElementById("trbars").innerHTML = ks.map(k=>`<div class="row" data-tip="${esc(k)}<br><b>${eur(g[k],2)}</b>"><span class="name">${esc(k)}</span><span class="track"><div class="fill" style="width:${g[k]/max*100}%;background:var(--proj)"></div></span><span class="val">${eur(g[k])}</span></div>`).join("");
 }
 
+let opLimit = 40, opKey = "";
 function renderOperations(){
   const fc = document.getElementById("fcat"), cur = fc.value;
   fc.innerHTML = `<option value="">Toutes les catégories</option>` + Object.keys(CATS).filter(c=>A.cnt[c]).map(c=>`<option value="${c}">${esc(CATS[c][0])} (${A.cnt[c]})</option>`).join("");
   fc.value = cur;
   const q = document.getElementById("q").value.toUpperCase();
-  const list = rows.filter(r=>(!fc.value || r.cat===fc.value) && (!q || (r.label+r.op).toUpperCase().includes(q))).sort((a,b)=>b.date-a.date);
+  const all = rows.filter(r=>(!fc.value || r.cat===fc.value) && (!q || (r.label+r.op).toUpperCase().includes(q))).sort((a,b)=>b.date-a.date);
+  const qk = fc.value + "|" + q; if (qk !== opKey){ opKey = qk; opLimit = 40; }
+  const list = all.slice(0, opLimit);
   const opts = Object.keys(CATS).map(c=>`<option value="${c}">${esc(CATS[c][0])}</option>`).join("");
   document.getElementById("optable").innerHTML = `<tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th class="n">Montant</th></tr>` +
     list.map(r=>`<tr><td>${r.dateStr}</td><td>${esc(r.label)}${r.tag?'<span class="tag">évitable</span>':''}</td><td>${r.synth?`<span class="sub">${esc(CATS[r.cat][0])} · calculé</span>`:`<select data-k="${esc(r.key)}">${opts.replace(`value="${r.cat}"`,`value="${r.cat}" selected`)}</select>`}</td><td class="n ${r.amount>0?'pos':''}">${eur(r.amount,2)}</td></tr>`).join("");
+  let more = document.getElementById("opmore"); if (!more){ document.getElementById("optable").closest(".tblwrap").insertAdjacentHTML("afterend", `<div id="opmore"></div>`); more = document.getElementById("opmore"); }
+  more.innerHTML = all.length > list.length ? `<button class="btn ghost" style="width:100%;margin-top:10px" id="opmorebtn">Afficher ${Math.min(40, all.length - list.length)} de plus (${all.length - list.length} restantes)</button>` : `<p class="sub">${all.length} opération${all.length>1?"s":""}.</p>`;
+  const mb = document.getElementById("opmorebtn"); if (mb) mb.onclick = () => { opLimit += 40; renderOperations(); };
   document.querySelectorAll("#optable select").forEach(s => s.onchange = e => { overrides[e.target.dataset.k] = e.target.value; store.set("overrides", overrides); refresh(); });
 }
 

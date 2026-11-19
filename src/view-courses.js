@@ -3,10 +3,14 @@
 import { esc, eur, dFR, num, sheet, $, isoToday, isoPlus, daysUntil, loadScript } from "./ui.js";
 import { scanBarcode } from "./native.js";
 import { productByBarcode, communityPrice, nearbyStores, home, setHomeCity, ATTRIB } from "./apis.js";
+import { realPrices } from "./prices.js";
+import { CATS as WCATS, byCategory, search as wSearch, frTitles, recipeFR, recipeCost } from "./recipes.js";
 
 export const RAYONS = ["Fruits & légumes", "Boucherie & volaille", "Poissonnerie", "Crèmerie & frais", "Surgelés", "Épicerie salée", "Épicerie sucrée", "Boissons", "Boulangerie", "Hygiène & maison", "Bébé", "Autres"];
 const GUESS = [[/pomme|banane|carotte|salade|tomate|oignon|courgette|poireau|citron|fruit|légume|patate|pomme de terre|ail\b|champignon|orange|poire|kiwi|poivron|brocoli|chou|épinard/i, 0], [/poulet|boeuf|bœuf|steak|viande|saucisse|jambon|lardon|porc|dinde|haché/i, 1], [/poisson|colin|saumon|cabillaud|crevette/i, 2], [/lait|yaourt|beurre|crème|creme|fromage|emmental|oeuf|œuf|mozzarella|compote/i, 3], [/surgel|glace|frites|petits pois surg/i, 4], [/pâte|pates|riz|semoule|lentille|conserve|sauce|huile|vinaigre|sel\b|épice|farine|thon|haricot|pois chiche|coulis|bouillon/i, 5], [/sucre|chocolat|biscuit|café|cafe|thé|confiture|céréale|miel|gâteau/i, 6], [/eau|jus|soda|bière|vin\b|sirop|lait de coco/i, 7], [/pain|baguette|brioche|tortilla|wrap/i, 8], [/papier|lessive|savon|shampo|dentifrice|éponge|sac poubelle|liquide vaisselle|essuie/i, 9], [/couche|lingette|petit pot|lait infantile/i, 10]];
 export const guessRayon = n => { const g = GUESS.find(([re]) => re.test(n)); return g ? RAYONS[g[1]] : "Autres"; };
+// Un repas du menu : recette de la base ({id}) ou recette du monde traduite ({ext})
+const mealOf = m => m.ext ? { nom: m.ext.title, emo: "🌍", min: m.ext.min || 45, etapes: m.ext.steps, ing: {}, ext: m.ext } : (window.Courses && window.Courses.R.find(x => x.id === m.id));
 const PLACE_OF = r => r === "Surgelés" ? "Congélateur" : ["Fruits & légumes", "Boucherie & volaille", "Poissonnerie", "Crèmerie & frais", "Boulangerie"].includes(r) ? "Frigo" : "Placard";
 const DLC_OF = { "Boucherie & volaille": 3, "Poissonnerie": 2, "Crèmerie & frais": 10, "Fruits & légumes": 6, "Boulangerie": 2, "Surgelés": 90 };
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
@@ -69,15 +73,16 @@ function drawListe(el) {
   const byR = RAYONS.map(r => [r, todo.filter(i => i.rayon === r)]).filter(([, l]) => l.length);
   el.innerHTML = `<form class="addbar" id="l_add"><input id="l_in" placeholder="Ajouter un article…" autocomplete="off" aria-label="Article à ajouter"><button class="btn icon" aria-label="Ajouter">＋</button><button type="button" class="btn ghost icon" id="l_scan" aria-label="Scanner un code-barres">▥</button></form>
     <div class="card menucard">${menu && menu.length && R ? `<div class="sechead"><h2>🍽️ Menu de la semaine</h2><button class="link" id="l_menu">Changer</button></div>
-        <div class="meals">${menu.map((m, i) => { const r = R.R.find(x => x.id === m.id); return r ? `<button class="meal" data-rec="${i}"><span aria-hidden="true">${r.emo}</span>${esc(r.nom)}${m.batch ? " ×2" : ""}</button>` : ""; }).join("")}</div>
-        <button class="btn ghost full mt" id="l_batch">🍳 Cuisiner tout d'un coup (batch cooking)</button>`
-      : `<h2>🍽️ Pas d'idée de repas ?</h2><p class="sub">Un menu pas cher pour la semaine, et la liste se remplit toute seule.</p><button class="btn full mt" id="l_menu">Préparer un menu</button>`}</div>
+        <div class="meals">${menu.map((m, i) => { const r = mealOf(m); return r ? `<button class="meal" data-rec="${i}"><span aria-hidden="true">${r.emo}</span>${esc(r.nom)}${m.batch ? " ×2" : ""}</button>` : ""; }).join("")}</div>
+        <div class="row mt"><button class="btn ghost" id="l_world">🌍 Recettes du monde</button><button class="btn ghost" id="l_batch">🍳 Batch cooking</button></div>`
+      : `<h2>🍽️ Pas d'idée de repas ?</h2><p class="sub">Un menu pas cher pour la semaine, et la liste se remplit toute seule.</p><button class="btn full mt" id="l_menu">Préparer un menu</button><button class="btn ghost full mt" id="l_world">🌍 Recettes du monde (traduites)</button>`}</div>
     <div class="card">${todo.length ? `<div class="sechead"><h2>À acheter <span class="pill">${todo.length}</span></h2></div>` + byR.map(([r, l]) => `<div class="rayon">${r}</div>${l.map(itemLine).join("")}`).join("") : `<div class="empty">La liste est vide.</div>`}
     ${done.length ? `<details class="mt"><summary><b>Déjà pris (${done.length})</b></summary>${done.map(itemLine).join("")}<button class="btn ghost full mt" id="l_clear">Retirer les articles pris</button></details>` : ""}</div>`;
   $("#l_add").onsubmit = async e => { e.preventDefault(); const v = $("#l_in").value.trim(); if (!v) return; $("#l_in").value = ""; await addToList(C.ctx, [{ name: v[0].toUpperCase() + v.slice(1) }]); $("#l_in").focus(); };
   $("#l_scan").onclick = () => scanFlow("liste");
   $("#l_menu").onclick = () => menuSheet();
   if ($("#l_batch")) $("#l_batch").onclick = () => batchSheet(menu);
+  $("#l_world").onclick = () => worldSheet();
   el.querySelectorAll("[data-rec]").forEach(b => b.onclick = () => recipeSheet(menu[+b.dataset.rec]));
   bindItems(el);
   if ($("#l_clear")) $("#l_clear").onclick = async () => { const ids = done.map(i => i.id); C.items = C.items.filter(i => !i.checked); draw(); await db(C.ctx.sb.from("shopping_items").delete().in("id", ids)); };
@@ -298,13 +303,24 @@ async function menuSheet() {
     const box = el.querySelector("#m_res");
     if (res.error) { box.innerHTML = `<p class="err">${esc(res.error)}</p>`; return; }
     const stock = lsGet("pb-stock-ing", []), buy = res.lines.filter(l => !l.placard && !stock.includes(l.id));
-    box.innerHTML = `<div class="menures">${res.menu.map((m, i) => { const r = R.R.find(x => x.id === m.id); return `<div class="line static"><span class="ic">${r.emo}</span><span class="tx"><b>${esc(r.nom)}${m.batch ? " ×2" : ""}</b><small>${r.min} min</small></span><button class="btn ghost sm" data-swap="${i}" aria-label="Changer ${esc(r.nom)}">🔄</button></div>`; }).join("")}</div>
-      <div class="pl"><span>Estimation pour ${buy.length} articles</span><b>≈ ${eur(R.total(buy))}</b></div>
-      <p class="sub">Prix indicatifs (marques distributeur, écarts entre enseignes UFC-Que Choisir 2026). Le vrai total s'affichera dans « En magasin ».${stock.length ? " Ce que tu as en stock n'est pas ajouté." : ""}</p>
+    const worlds = (lsGet("budget_coursesMenu", []) || []).filter(m => m.ext);
+    box.innerHTML = `<div class="menures">${res.menu.map((m, i) => { const r = R.R.find(x => x.id === m.id); return `<div class="line static"><span class="ic">${r.emo}</span><span class="tx"><b>${esc(r.nom)}${m.batch ? " ×2" : ""}</b><small>${r.min} min</small></span><button class="btn ghost sm" data-swap="${i}" aria-label="Changer ${esc(r.nom)}">🔄</button></div>`; }).join("")}
+      ${worlds.map(m => `<div class="line static"><span class="ic">🌍</span><span class="tx"><b>${esc(m.ext.title)}</b><small>recette du monde, gardée</small></span></div>`).join("")}</div>
+      <div id="m_price"><div class="pl"><span>Prix réels en cours de calcul…</span><b id="m_prog"></b></div></div>
       <button class="btn full mt" id="m_add">Ajouter ces ${buy.length} articles à la liste</button>`;
+    const st = lsGet("pb-store", null), brand = (st && (st.brand || st.name)) || R.STORES.find(x => x[0] === cfg.store)[1].replace(" (estimé)", "");
+    const token = (run.tok = (run.tok || 0) + 1);
+    realPrices(buy, brand, (n, t) => { const e = el.querySelector("#m_prog"); if (e && token === run.tok) e.textContent = `${n}/${t}`; }).then(lines => {
+      const box2 = el.querySelector("#m_price"); if (!box2 || token !== run.tok) return;
+      const real = lines.filter(l => l.real), est = lines.filter(l => !l.real), tot = lines.reduce((a, l) => a + l.cost, 0);
+      box2.innerHTML = `<div class="pl"><span>Total pour ${lines.length} articles</span><b>≈ ${eur(tot)}</b></div>
+        <p class="sub">${real.length} prix relevés en magasin (Open Prices, médiane${home() ? " autour de " + esc(home().city) : " en France"})${est.length ? `, ${est.length} estimé${est.length > 1 ? "s" : ""} (aucun relevé récent)` : ""}.${home() ? "" : " Indique ta ville dans Plus pour des prix locaux."}${stock.length ? " Ce que tu as en stock n'est pas compté." : ""}</p>
+        <details><summary class="sub">Détail des prix</summary>${lines.map(l => `<div class="pl small"><span>${l.packs} × ${esc(l.nom)}<small>${l.real ? `${esc(l.real.scope)} · ${l.real.n} relevés` : "estimé"}</small></span><span>${eur(l.cost, 2)}</span></div>`).join("")}</details>`;
+      res.priced = lines;
+    }).catch(() => { const e = el.querySelector("#m_price"); if (e) e.innerHTML = `<div class="pl"><span>Estimation (hors ligne)</span><b>≈ ${eur(R.total(buy))}</b></div>`; });
     box.querySelectorAll("[data-swap]").forEach(b => b.onclick = () => { const i = +b.dataset.swap; const locked = res.menu.map((m, j) => j === i ? null : m).filter(Boolean); cfg.seed = (cfg.seed || 1) + 1; run({ locked, avoid: [res.menu[i].id] }); });
     box.querySelector("#m_add").onclick = async () => {
-      budgetSave("coursesCfg", cfg); budgetSave("coursesMenu", res.menu); close();
+      budgetSave("coursesCfg", cfg); budgetSave("coursesMenu", [...res.menu, ...worlds]); close();
       await addToList(C.ctx, buy.map(l => ({ name: l.nom, qty: `${l.packs} × ${l.pack}`, rayon: { "Placard": "Épicerie salée" }[l.rayon] || l.rayon })));
       draw();
     };
@@ -313,6 +329,7 @@ async function menuSheet() {
 }
 
 function recipeSheet(m) {
+  if (m.ext) return worldRecipe(m.ext.id, m);
   const R = window.Courses, r = R.R.find(x => x.id === m.id), cfg = lsGet("budget_coursesCfg", { adultes: 2, enfants: 1 }), k = (cfg.adultes + 0.5 * cfg.enfants) * (m.batch ? 2 : 1);
   const ing = Object.entries(r.ing).filter(([id, q]) => R.ING[id] && q).map(([id, q]) => { const d = R.ING[id], v = q * k; return d[2] === "pc" ? `${String(Math.round(v * 4) / 4).replace(".", ",")} ${d[0].toLowerCase()}` : `${Math.round(v / 5) * 5} ${d[2]} de ${d[0].toLowerCase()}`; });
   sheet(`<h2>${r.emo} ${esc(r.nom)}</h2><p class="sub">⏱️ ${r.min} min · ${m.batch ? "2 repas" : "1 repas"} pour ${cfg.adultes} adulte${cfg.adultes > 1 ? "s" : ""}${cfg.enfants ? ` et ${cfg.enfants} enfant${cfg.enfants > 1 ? "s" : ""}` : ""}</p>
@@ -324,7 +341,7 @@ function recipeSheet(m) {
 function batchSteps(menu, sel) {
   const R = window.Courses, cfg = lsGet("budget_coursesCfg", { adultes: 2, enfants: 1 }), portions = cfg.adultes + 0.5 * cfg.enfants;
   const meals = menu.filter((m, i) => sel.includes(i));
-  const recs = meals.map(m => ({ m, r: R.R.find(x => x.id === m.id), k: portions * (m.batch ? 2 : 1) })).filter(x => x.r).sort((a, b) => b.r.min - a.r.min);
+  const recs = meals.map(m => ({ m, r: mealOf(m), k: portions * (m.batch ? 2 : 1) })).filter(x => x.r).sort((a, b) => b.r.min - a.r.min);
   const fmt = (id, v) => { const d = R.ING[id]; return d[2] === "pc" ? `${String(Math.round(v * 4) / 4).replace(".", ",")} ${d[0].toLowerCase()}` : `${Math.round(v / 5) * 5} ${d[2]} de ${d[0].toLowerCase()}`; };
   const veg = {}, starch = {};
   for (const { r, k } of recs) for (const [id, q] of Object.entries(r.ing)) { const d = R.ING[id]; if (!d || !q) continue; if (d[1] === 0) (veg[id] = veg[id] || []).push([r.nom, q * k]); if (["pates", "riz", "semoule", "pommes_terre"].includes(id)) (starch[id] = starch[id] || []).push([r.nom, q * k]); }
@@ -343,7 +360,7 @@ function batchSheet(menu) {
   const R = window.Courses; if (!R || !menu) return;
   const sel = menu.map((m, i) => i);
   const s = sheet(`<h2>🍳 Batch cooking</h2><p class="hint">Les recettes à préparer dans la même session :</p>
-    ${menu.map((m, i) => { const r = R.R.find(x => x.id === m.id); return `<label class="sw"><input type="checkbox" data-bs="${i}" checked> ${r.emo} ${esc(r.nom)} <span class="sub">${r.min} min</span></label>`; }).join("")}
+    ${menu.map((m, i) => { const r = mealOf(m); return r ? `<label class="sw"><input type="checkbox" data-bs="${i}" checked> ${r.emo} ${esc(r.nom)} <span class="sub">${r.min} min</span></label>` : ""; }).join("")}
     <button class="btn full mt" id="b_go">Commencer</button>`);
   s.el.querySelectorAll("[data-bs]").forEach(c => c.onchange = () => { const i = +c.dataset.bs, k = sel.indexOf(i); if (c.checked && k < 0) sel.push(i); if (!c.checked && k >= 0) sel.splice(k, 1); });
   s.el.querySelector("#b_go").onclick = () => { if (!sel.length) return; s.close(); guided(batchSteps(menu, sel)); };
@@ -366,4 +383,49 @@ function guided(steps) {
     if (t) t.onclick = () => { clearInterval(timer); let left = mins * 60; const v = ov.querySelector("#g_tv"); const tick = () => { v.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`; if (left-- <= 0) { clearInterval(timer); v.textContent = "C'est prêt !"; try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch {} try { const a = new AudioContext(), o = a.createOscillator(); o.frequency.value = 880; o.connect(a.destination); o.start(); o.stop(a.currentTime + 0.8); } catch {} } }; tick(); timer = setInterval(tick, 1000); };
   };
   show();
+}
+
+/* ---------- Recettes du monde (TheMealDB, traduites) ---------- */
+async function worldSheet() {
+  await loadScript("./budget/courses.js").catch(() => {});
+  const { el } = sheet(`<h2>🌍 Recettes du monde</h2><p class="sub">Plus de 300 recettes TheMealDB, traduites en français sur ton téléphone.</p>
+    <form id="w_f" class="addbar"><input id="w_q" placeholder="ex. poulet, lentilles, curry…" autocomplete="off" aria-label="Rechercher une recette"><button class="btn icon" aria-label="Rechercher">🔎</button></form>
+    <div class="chips">${WCATS.map(([k, l]) => `<button class="chip" data-wc="${k}">${l}</button>`).join("")}</div><div id="w_res" class="mt"></div>`);
+  const res = el.querySelector("#w_res");
+  const show = async (p, label) => {
+    res.innerHTML = `<p class="sub">Recherche…</p>`;
+    try {
+      const list = await p; if (!list.length) { res.innerHTML = `<p class="sub">Aucune recette pour « ${esc(label)} ».</p>`; return; }
+      res.innerHTML = `<p class="sub">Traduction des titres…</p>`;
+      const fr = await frTitles(list.slice(0, 24));
+      res.innerHTML = `<div class="wgrid">${fr.map(m => `<button class="wcard" data-wid="${m.idMeal}"><img src="${esc(m.strMealThumb)}/small" alt="" loading="lazy"><span>${esc(m.fr)}</span></button>`).join("")}</div>${list.length > 24 ? `<p class="sub">24 premières sur ${list.length}. Affine ta recherche.</p>` : ""}`;
+      res.querySelectorAll("[data-wid]").forEach(b => b.onclick = () => worldRecipe(b.dataset.wid));
+    } catch (e) { res.innerHTML = `<p class="err">${esc(C.ctx.errText(e))}</p>`; }
+  };
+  el.querySelectorAll("[data-wc]").forEach(b => b.onclick = () => { el.querySelectorAll("[data-wc]").forEach(x => x.classList.toggle("on", x === b)); show(byCategory(b.dataset.wc), b.textContent); });
+  el.querySelector("#w_f").onsubmit = e => { e.preventDefault(); const q = el.querySelector("#w_q").value.trim(); if (q) show(wSearch(q), q); };
+}
+
+async function worldRecipe(id, inMenu) {
+  const { el, close } = sheet(`<div id="wr"><h2>Chargement…</h2><p class="sub" id="wr_s">La première traduction télécharge le traducteur français (environ 30 Mo, une seule fois).</p></div>`);
+  let r;
+  try { r = await recipeFR(id, t => { const s = el.querySelector("#wr_s"); if (s) s.textContent = t; }); }
+  catch (e) { el.querySelector("#wr").innerHTML = `<h2>Recette indisponible</h2><p class="err">${esc(C.ctx.errText(e))}</p>`; return; }
+  const menu = lsGet("budget_coursesMenu", []) || [], already = menu.some(m => m.ext && m.ext.id === r.id);
+  el.querySelector("#wr").innerHTML = `<img class="wimg" src="${esc(r.img)}" alt=""><h2>${esc(r.title)}</h2><p class="sub">${esc([r.cat, r.area].filter(Boolean).join(" · "))} · pour 4 personnes environ</p>
+    <div id="wr_cost" class="pricehint"><span class="sub">Calcul du coût avec les prix relevés…</span></div>
+    <h3>Ingrédients</h3><ul class="ing">${r.ingredients.map(x => `<li>${/^[\d,]+$/.test(x.measure || "") ? `${esc(x.measure)} ${esc(x.name.toLowerCase())}` : `${esc(x.name)}${x.measure ? ` <span class="sub">· ${esc(x.measure)}</span>` : ""}`}</li>`).join("")}</ul>
+    <h3>Préparation</h3><ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>
+    <p class="foot">Recette : TheMealDB${r.source ? ` · <a href="${esc(r.source)}" target="_blank" rel="noopener">source d'origine</a>` : ""} · traduction automatique, à vérifier pour les quantités.</p>
+    <div class="row sticky-actions">${inMenu ? `<button class="btn ghost" id="wr_out">Retirer du menu</button>` : already ? `<button class="btn ghost" disabled>Déjà dans le menu</button>` : `<button class="btn" id="wr_add">＋ Au menu</button>`}<button class="btn ghost" id="wr_list">🛒 Sur la liste</button></div>`;
+  const st = lsGet("pb-store", null);
+  recipeCost(r, st && (st.brand || st.name)).then(c => { const b = el.querySelector("#wr_cost"); if (!b) return; b.innerHTML = c.priced >= 3 && c.priced / c.total >= 0.3 ? `<span class="sub">≈ <b>${eur(c.cost, 2)}</b> d'après les prix relevés (Open Prices) de ${c.priced} ingrédients sur ${c.total} ; épices et placard non comptés.</span>` : `<span class="sub">Pas assez de prix relevés pour chiffrer cette recette (${c.priced}/${c.total} ingrédients). Les prix réels apparaîtront en magasin.</span>`; }).catch(() => {});
+  const keep = { id: r.id, title: r.title, img: r.img, steps: r.steps, ingredients: r.ingredients };
+  if (el.querySelector("#wr_add")) el.querySelector("#wr_add").onclick = () => { budgetSave("coursesMenu", [...menu, { ext: keep }]); C.ctx.toast("Ajoutée au menu"); close(); draw(); };
+  if (el.querySelector("#wr_out")) el.querySelector("#wr_out").onclick = () => { budgetSave("coursesMenu", menu.filter(m => !(m.ext && m.ext.id === r.id))); close(); draw(); };
+  el.querySelector("#wr_list").onclick = async () => {
+    const skip = /^(sel|poivre|eau|huile|huile d'olive)$/i;
+    await addToList(C.ctx, r.ingredients.filter(x => !skip.test(x.name)).map(x => ({ name: x.name, qty: x.measure && x.measure !== "selon le goût" ? x.measure : "" })));
+    close();
+  };
 }
