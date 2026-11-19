@@ -536,6 +536,7 @@ function compute(){
   if (!targets) applyScenario(scenario, false);
 }
 function applyScenario(k, save=true){
+  if (!SCEN[k]){ const p = store.get("targetsPerso", null); if (p){ scenario = "perso"; targets = {...p}; if (save){ store.set("targets", targets); store.set("scenario", scenario); } return; } k = "raisonnable"; }
   scenario = k; targets = {};
   for (const c of PLAN_CATS){ const cur = Math.max(0, A.dep[c]||0); const f = SCEN[k][c] ?? 1; targets[c] = f >= 1 ? Math.ceil(cur) : Math.round(cur * f / 5) * 5; }
   if (save){ store.set("targets", targets); store.set("scenario", scenario); }
@@ -1341,7 +1342,9 @@ function renderOperations(){
   document.querySelectorAll("#optable select").forEach(s => s.onchange = e => { overrides[e.target.dataset.k] = e.target.value; store.set("overrides", overrides); refresh(); });
 }
 
-function refresh(){ compute(); renderSources(); if (A) document.querySelectorAll("#synthese > *").forEach(el => el.style.display = ""); if (!A){ refreshPaie();
+let pbDirty = false;
+const pbVisible = () => { try { const f = window.frameElement; return !f || f.getClientRects().length > 0; } catch(e){ return true; } };
+function refresh(){ if (EMBED && !pbVisible()){ compute(); pbDirty = true; return; } pbDirty = false; compute(); renderSources(); if (A) document.querySelectorAll("#synthese > *").forEach(el => el.style.display = ""); if (!A){ refreshPaie();
     const w = `<div class="card"><h2>👋 Première utilisation</h2><p class="hint">Les relevés bancaires restent uniquement sur cet appareil. Pour commencer, importe tes relevés (CSV ou Excel), tes bulletins de paie et ton tableau d'amortissement, ou restaure une sauvegarde.</p><button class="btn" data-go="plus:comptes">Importer mes données</button></div>`;
     const h = document.getElementById("homehero"); if (h){ h.innerHTML = w; document.querySelectorAll("#synthese > *").forEach(el => el.style.display = el.contains(h) ? "" : "none"); } ["homeminis","donut","tiles"].forEach(id=>{ const el=document.getElementById(id); if (el) el.innerHTML=""; });
     try { renderPaie(); renderPaieList(); renderPret(); renderRules(); renderCourses(); } catch(e){}
@@ -1358,9 +1361,9 @@ const GROUPS = {
   plus: [["operations","Opérations"],["recurrents","Prélèvements"],["categories","Catégories"],["paieT","Fiche de paie"],["comptes","Comptes & réglages"]]
 };
 let curGroup = "accueil";
-function go(g, sec){
+function go(g, sec, fromHash){
   curGroup = g; sec = sec || GROUPS[g][0][0];
-  if (EMBED) try { parent.postMessage({pbGroup: g, pbSection: sec}, "*"); } catch(e){}
+  if (EMBED && !fromHash) try { parent.postMessage({pbGroup: g, pbSection: sec}, "*"); } catch(e){}
   if (EMBED) document.documentElement.classList.toggle("nosub", g === "plus" || g === "courses");
   document.querySelectorAll("nav#nav button").forEach(x=>x.classList.toggle("on", x.dataset.g===g));
   const sn = document.getElementById("subnav");
@@ -1427,7 +1430,7 @@ document.getElementById("provadd").onclick = () => { provisions.push({l:"Nouvell
 document.getElementById("radd").onclick = () => { const txt = document.getElementById("rtxt").value.trim(); if (!txt) return;
   rules.unshift({txt, cat: document.getElementById("rcat").value, sens: document.getElementById("rsens").value}); store.set("rules", rules); document.getElementById("rtxt").value = ""; refresh(); };
 refresh();
-function goHash(){ const p = new URLSearchParams(location.hash.slice(1)); const g = p.get("g"); if (g && GROUPS[g]) go(g, p.get("s") || undefined); }
+function goHash(){ const p = new URLSearchParams(location.hash.slice(1)); const g = p.get("g"); if (g && GROUPS[g]){ if (pbDirty && pbVisible()) refresh(); go(g, p.get("s") || undefined, true); } }
 window.addEventListener("hashchange", goHash); goHash();
 </script>
 </body>

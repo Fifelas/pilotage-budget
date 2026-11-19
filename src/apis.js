@@ -38,23 +38,53 @@ export async function setHomeCity(q) {
   const d = await getJSON(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&addressdetails=1&q=${encodeURIComponent(q)}`);
   if (!d.length) throw new Error("Ville introuvable");
   const a = d[0].address || {}, h = { lat: +d[0].lat, lon: +d[0].lon, city: a.city || a.town || a.village || a.municipality || q, dep: (a.postcode || "").slice(0, 2), postcode: a.postcode || "" };
-  cache.set("home", h); cache.set("stores", null); return h;
+  cache.set("home", h); for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && (k.startsWith("pb-cache-oprice-") || k === "pb-cache-stores2" || k === "pb-cache-cover")) localStorage.removeItem(k); } return h;
 }
 export const km = (a, b) => { const R = 6371, r = x => x * Math.PI / 180, dLa = r(b.lat - a.lat), dLo = r(b.lon - a.lon); const s = Math.sin(dLa / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); };
 
 /* ---------- Supermarchés autour de chez toi ---------- */
+// 1) Overpass (plusieurs serveurs publics, souvent surchargés) ; 2) sinon Nominatim, recherche « supermarché » autour de la ville.
+// On ne garde en mémoire qu'un résultat non vide.
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+const shopOf = (h, id, t, lat, lon) => ({ id, name: t.name || t.brand || "Magasin", brand: t.brand || t.name || "", city: t["addr:city"] || "", lat, lon, dist: km(h, { lat, lon }) });
+async function viaOverpass(h, radiusKm) {
+  const q = `[out:json][timeout:20];nwr["shop"~"^(supermarket|discount)$"](around:${radiusKm * 1000},${h.lat},${h.lon});out tags center;`;
+  for (const url of OVERPASS) {
+    try {
+      const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+      const r = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ctl.signal });
+      clearTimeout(t); if (!r.ok) continue;
+      const d = await r.json(); if (d.remark && /error|timed out|rate/i.test(d.remark)) continue;
+      const list = (d.elements || []).map(e => { const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon; return lat ? shopOf(h, `${e.type}/${e.id}`, e.tags || {}, lat, lon) : null; }).filter(Boolean);
+      if (list.length) return list;
+    } catch { /* serveur suivant */ }
+  }
+  return [];
+}
+async function viaNominatim(h, radiusKm) {
+  const dLat = radiusKm / 111, dLon = radiusKm / (111 * Math.cos(h.lat * Math.PI / 180));
+  const box = [h.lon - dLon, h.lat + dLat, h.lon + dLon, h.lat - dLat].map(v => v.toFixed(4)).join(",");
+  const d = await getJSON(`https://nominatim.openstreetmap.org/search?format=json&limit=50&bounded=1&extratags=1&addressdetails=1&viewbox=${box}&q=${encodeURIComponent("[supermarket]")}`);
+  return d.map(x => { const a = x.address || {}; return shopOf(h, `${x.osm_type}/${x.osm_id}`, { name: x.name, brand: (x.extratags || {}).brand, "addr:city": a.city || a.town || a.village || "" }, +x.lat, +x.lon); });
+}
 export async function nearbyStores(radiusKm = 15) {
   const h = home(); if (!h) return [];
-  const hit = cache.get("stores", 30); if (hit) return hit;
-  const q = `[out:json][timeout:25];(nwr["shop"~"^(supermarket|convenience|discount)$"](around:${radiusKm * 1000},${h.lat},${h.lon}););out center tags 200;`;
-  const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-  if (!r.ok) throw new Error("Service des magasins indisponible, réessaie plus tard");
-  const d = await r.json();
-  const list = (d.elements || []).map(e => {
-    const t = e.tags || {}, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-    return { id: `${e.type}/${e.id}`, name: t.name || t.brand || "Magasin", brand: t.brand || t.name || "", city: t["addr:city"] || "", lat, lon, dist: lat ? km(h, { lat, lon }) : 99 };
-  }).filter(s => s.lat).sort((a, b) => a.dist - b.dist);
-  cache.set("stores", list); return list;
+  const hit = cache.get("stores2", 30); if (hit && hit.length) return hit;
+  let list = await viaOverpass(h, radiusKm);
+  if (!list.length) list = await viaNominatim(h, radiusKm).catch(() => []);
+  if (!list.length) throw new Error("Impossible de trouver les magasins pour l'instant (services OpenStreetMap occupés). Réessaie plus tard ou tape le nom du magasin.");
+  const seen = new Set(); list = list.sort((a, b) => a.dist - b.dist).filter(s => { const k = s.name + Math.round(s.lat * 500); if (seen.has(k)) return false; seen.add(k); return true; });
+  cache.set("stores2", list); return list;
+}
+
+// Combien de prix relevés existent autour de la ville (pour expliquer d'où viennent les prix)
+export async function priceCoverage() {
+  const h = home(); if (!h) return null;
+  const hit = cache.get("cover", 7); if (hit) return hit;
+  const since = new Date(Date.now() - 730 * 864e5).toISOString().slice(0, 10);
+  const n = async r => { try { const r2 = await fetch(`https://prices.openfoodfacts.org/api/v1/prices?lat=${h.lat}&lon=${h.lon}&radius_km=${r}&date__gte=${since}&size=1`); return (await r2.json()).total ?? 0; } catch { return null; } };
+  const [a, b, c] = await Promise.all([n(10), n(40), n(100)]);
+  const out = { r10: a, r40: b, r100: c }; if (a != null) cache.set("cover", out); return out;
 }
 
 /* ---------- Prix réels relevés (Open Prices) ---------- */

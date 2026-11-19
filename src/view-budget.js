@@ -5,14 +5,14 @@ import { askSolde } from "./view-today.js";
 let open = null, showAll = false;
 
 export async function renderBudget(ctx, main) {
-  main.innerHTML = `<header class="hello"><h1>Budget</h1></header><div id="bbody"><div class="card skel"></div></div>`;
-  await ctx.ready();
+  main.innerHTML = `<header class="hello"><h1>Budget</h1></header><div id="bbody">${ctx.isReady() ? "" : `<div class="card skel"></div>`}</div>`;
+  if (!ctx.isReady()) await ctx.ready();
   const m = ctx.model(), body = $("#bbody"); if (!body || !m) return;
   if (!m.hasData) { body.innerHTML = `<div class="card"><p>Importe d'abord tes relevés.</p><button class="btn" id="b_imp">Importer</button></div>`; $("#b_imp").onclick = () => ctx.detail("plus", "comptes", "Relevés et import"); return; }
 
   const now = new Date(), month = now.toLocaleDateString("fr-FR", { month: "long" });
   const spent = m.env.reduce((a, e) => a + e.spent, 0), tot = m.env.reduce((a, e) => a + e.target, 0);
-  const S = ["actuel", "raisonnable", "ambitieux"], SL = { actuel: "Comme aujourd'hui", raisonnable: "Raisonnable", ambitieux: "Ambitieux" };
+  const S = ["actuel", "raisonnable", "ambitieux", "perso"], SL = { actuel: "Actuel", raisonnable: "Raisonnable", ambitieux: "Ambitieux", perso: "Sur mesure" };
   const sc = m.scen[m.scenario] || m.scen.actuel;
 
   body.innerHTML = `
@@ -32,9 +32,10 @@ export async function renderBudget(ctx, main) {
 
   <section class="card">
     <div class="sechead"><h2>Optimiser</h2><span class="sub">${m.actionsDone}/${m.actionsTotal} faites</span></div>
-    <div class="seg3" role="radiogroup" aria-label="Mon plan">${S.map(k => `<button data-sc="${k}" role="radio" aria-checked="${m.scenario === k}" class="${m.scenario === k ? "on" : ""}">${SL[k]}</button>`).join("")}</div>
+    <div class="seg3 seg4" role="radiogroup" aria-label="Mon plan">${S.map(k => `<button data-sc="${k}" role="radio" aria-checked="${m.scenario === k}" class="${m.scenario === k ? "on" : ""}">${SL[k]}</button>`).join("")}</div>
     <div class="planres ${sc.marge >= 0 ? "" : "neg"}"><span>Reste chaque mois</span><b>${sc.marge >= 0 ? "+" : "−"}${eur(Math.abs(sc.marge))}</b></div>
-    <p class="sub">${m.scenario === "actuel" ? "Sans rien changer." : `Le plan baisse tes enveloppes de ${eur(sc.savings)} par mois (fast-food, bazar, achats en ligne en premier).`}${m.evitableMonth > 20 ? ` Dépenses évitables repérées : ${eur(m.evitableMonth)} par mois.` : ""}</p>
+    <p class="sub">${m.scenario === "actuel" ? "Sans rien changer." : m.scenario === "perso" ? `Ton plan : ${eur(sc.savings)} de moins par mois que tes dépenses habituelles.` : `Ce plan baisse tes enveloppes de ${eur(sc.savings)} par mois (fast-food, bazar, achats en ligne en premier).`}${m.evitableMonth > 20 ? ` Dépenses évitables repérées : ${eur(m.evitableMonth)} par mois.` : ""}</p>
+    <button class="btn ghost full" id="b_plan">✏️ Régler mes enveloppes moi-même</button>
     <h3>À faire en priorité</h3>
     ${m.actions.length ? m.actions.map(a => `<div class="action"><div class="at">${esc(a.t)}</div>
       <div class="ab"><span class="gain">${a.gain ? `+${eur(a.gain)} / an` : "conseil"}</span><button class="btn sm" data-done="${esc(a.id)}">Fait ✓</button>${a.later ? "" : `<button class="btn ghost sm" data-later="${esc(a.id)}">Plus tard</button>`}</div></div>`).join("") : `<p class="sub">Toutes les actions sont faites. Bravo !</p>`}
@@ -47,9 +48,15 @@ export async function renderBudget(ctx, main) {
   if (m.treso) drawTreso(m.treso);
   if ($("#b_all")) $("#b_all").onclick = () => { showAll = !showAll; renderBudget(ctx, main); };
   body.querySelectorAll("#b_solde").forEach(b => b.onclick = () => askSolde(ctx));
-  body.querySelectorAll("[data-env]").forEach(b => b.onclick = () => { open = open === b.dataset.env ? null : b.dataset.env; renderBudget(ctx, main); });
-  body.querySelectorAll("[data-edit]").forEach(b => b.onclick = e => { e.stopPropagation(); editTarget(ctx, m.env.find(x => x.c === b.dataset.edit)); });
-  body.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => ctx.act("scenario", { k: b.dataset.sc }));
+  body.querySelectorAll("[data-env]").forEach(b => b.onclick = () => {
+    const was = open; open = open === b.dataset.env ? null : b.dataset.env;
+    for (const c of [was, open]) { if (!c) continue; const e = m.env.find(x => x.c === c), node = body.querySelector(`[data-env="${c}"]`); if (e && node) { const t = document.createElement("div"); t.innerHTML = envRow(e, 0, m.pace); node.closest(".env").replaceWith(t.firstElementChild); } }
+    bindEnv(ctx, body, m);
+  });
+  bindEnv(ctx, body, m);
+  $("#b_plan").onclick = () => planSheet(ctx, m);
+
+  body.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => { if (b.dataset.sc === "perso" && !m.presets.perso) return planSheet(ctx, m); ctx.act("scenario", { k: b.dataset.sc }); });
   body.querySelectorAll("[data-done]").forEach(b => b.onclick = () => { ctx.act("done", { id: b.dataset.done }); ctx.toast("Bien joué !"); });
   body.querySelectorAll("[data-later]").forEach(b => b.onclick = () => ctx.act("later", { id: b.dataset.later }));
   $("#b_ev").onclick = () => ctx.detail("eco", "evitables", "Dépenses évitables");
@@ -98,4 +105,33 @@ function drawTreso(t) {
     info.innerHTML = `<b>${dLong(p.d)} : ${eur(p.bal)}</b>${p.ev.length ? "<br>" + p.ev.map(([l, v]) => `${esc(l)} <span class="${v > 0 ? "pos" : ""}">${v > 0 ? "+" : "−"}${eur(Math.abs(v))}</span>`).join(" · ") : ""}`;
   };
   svg.addEventListener("pointermove", pick); svg.addEventListener("pointerdown", pick);
+}
+
+function bindEnv(ctx, body, m) {
+  body.querySelectorAll("[data-edit]").forEach(b => b.onclick = e => { e.stopPropagation(); editTarget(ctx, m.env.find(x => x.c === b.dataset.edit)); });
+  body.querySelectorAll("[data-env]").forEach(b => { if (!b._bound) { b._bound = true; } });
+}
+
+// Plan sur mesure : chaque enveloppe réglable, résultat recalculé en direct
+function planSheet(ctx, m) {
+  const t = {}; for (const p of m.plan) t[p.c] = (m.presets.perso || {})[p.c] ?? p.target;
+  const marge = () => m.marge + m.plan.reduce((a, p) => a + Math.max(0, p.avg - t[p.c]), 0);
+  const max = p => Math.max(50, Math.ceil(p.avg * 1.3 / 10) * 10);
+  const { el, close } = sheet(`<h2>Mes enveloppes</h2><p class="hint">Règle ce que tu t'autorises chaque mois. La moyenne de tes dépenses est indiquée sous chaque ligne.</p>
+    <div class="chips"><span class="sub" style="align-self:center">Partir de :</span>${[["actuel", "Actuel"], ["raisonnable", "Raisonnable"], ["ambitieux", "Ambitieux"]].map(([k, l]) => `<button class="chip" data-pre="${k}">${l}</button>`).join("")}</div>
+    <div class="planlive" id="pl_res"></div>
+    ${m.plan.map(p => `<div class="prow"><div class="ph"><b>${esc(p.label)}</b><span><input class="pin" data-pin="${p.c}" inputmode="numeric" value="${Math.round(t[p.c])}" aria-label="${esc(p.label)} par mois"> €</span></div>
+      <input type="range" min="0" max="${max(p)}" step="5" value="${Math.min(max(p), t[p.c])}" data-pr="${p.c}" aria-label="${esc(p.label)}">
+      <div class="sub" data-ps="${p.c}"></div></div>`).join("")}
+    <div class="row sticky-actions"><button class="btn" id="pl_ok">Appliquer ce plan</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  const upd = c => {
+    const p = m.plan.find(x => x.c === c), d = p.avg - t[c];
+    el.querySelector(`[data-ps="${c}"]`).innerHTML = `moyenne ${eur(p.avg)} · ${d > 0 ? `<span class="pos">−${eur(d)} / mois</span>` : d < 0 ? `+${eur(-d)} / mois` : "inchangé"}`;
+    const v = marge(); el.querySelector("#pl_res").innerHTML = `<span>Reste chaque mois</span><b class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : "−"}${eur(Math.abs(v))}</b>`;
+  };
+  m.plan.forEach(p => upd(p.c));
+  el.querySelectorAll("[data-pr]").forEach(r => r.oninput = () => { const c = r.dataset.pr; t[c] = +r.value; el.querySelector(`[data-pin="${c}"]`).value = t[c]; upd(c); });
+  el.querySelectorAll("[data-pin]").forEach(i => i.oninput = () => { const c = i.dataset.pin, v = num(i.value); if (!(v >= 0)) return; t[c] = v; el.querySelector(`[data-pr="${c}"]`).value = v; upd(c); });
+  el.querySelectorAll("[data-pre]").forEach(b => b.onclick = () => { const pr = m.presets[b.dataset.pre] || {}; for (const p of m.plan) { t[p.c] = Math.round(pr[p.c] ?? p.avg); el.querySelector(`[data-pr="${p.c}"]`).value = t[p.c]; el.querySelector(`[data-pin="${p.c}"]`).value = t[p.c]; upd(p.c); } });
+  el.querySelector("#pl_ok").onclick = () => { close(); ctx.act("targets", { targets: t }); ctx.toast("Plan enregistré"); };
 }

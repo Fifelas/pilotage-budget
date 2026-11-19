@@ -4,8 +4,8 @@ import { notifStatus, notifOpenSettings } from "./native.js";
 
 export async function renderToday(ctx, main) {
   const name = (ctx.S.me.display_name || "").trim();
-  main.innerHTML = `<header class="hello"><div><div class="sub">${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div><h1>Bonjour${name ? " " + esc(name) : ""}</h1></div></header><div id="tbody"><div class="card skel"></div></div>`;
-  await ctx.ready();
+  main.innerHTML = `<header class="hello"><div><div class="sub">${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div><h1>Bonjour${name ? " " + esc(name) : ""}</h1></div></header><div id="tbody">${ctx.isReady() ? "" : `<div class="card skel"></div>`}</div>`;
+  if (!ctx.isReady()) await ctx.ready();
   const m = ctx.model(), body = $("#tbody"); if (!body || !m) return;
 
   if (!m.hasData) {
@@ -81,7 +81,7 @@ export function quickAdd(ctx) {
     const v = num(el.querySelector("#q_v").value); if (!(v > 0)) { el.querySelector("#q_msg").textContent = "Indique un montant."; return; }
     const inc = el.querySelector("#q_in").checked, label = el.querySelector("#q_l").value.trim() || (inc ? "Rentrée" : QUICK.find(q => q[0] === cat)[2]);
     ctx.act("add", { amount: Math.round((inc ? v : -v) * 100) / 100, label, cat: inc ? "" : cat, d: el.querySelector("#q_d").value || isoToday() });
-    close(); ctx.toast("Ajouté"); ctx.rerender();
+    close(); ctx.toast("Ajouté");
   };
 }
 
@@ -89,5 +89,5 @@ export function askSolde(ctx) {
   const { el, close } = sheet(`<h2>Solde de ton compte</h2><p class="hint">Le montant affiché aujourd'hui dans l'appli de ta banque (compte courant). Il sert à prévoir les 2 prochains mois.</p>
     <div class="amount"><input id="s_v" type="text" inputmode="decimal" placeholder="0" autofocus aria-label="Solde en euros"><span>€</span></div>
     <button class="btn full mt" id="s_ok">Enregistrer</button><div id="s_msg" class="err"></div>`);
-  el.querySelector("#s_ok").onclick = () => { const v = num(el.querySelector("#s_v").value); if (isNaN(v)) { el.querySelector("#s_msg").textContent = "Indique un montant (négatif si découvert)."; return; } ctx.act("solde", { v }); close(); ctx.rerender(); };
+  el.querySelector("#s_ok").onclick = () => { const v = num(el.querySelector("#s_v").value); if (isNaN(v)) { el.querySelector("#s_msg").textContent = "Indique un montant (négatif si découvert)."; return; } close(); ctx.act("solde", { v }); };
 }

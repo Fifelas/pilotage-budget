@@ -2,7 +2,7 @@
 import { esc, eur, $, sheet } from "./ui.js";
 import { APP_VERSION } from "./config.js";
 import { notifStatus, notifOpenSettings, isNative } from "./native.js";
-import { home, setHomeCity, ATTRIB } from "./apis.js";
+import { home, setHomeCity, priceCoverage, ATTRIB } from "./apis.js";
 
 const DETAILS = [
   ["plus", "comptes", "🗂️", "Relevés et import", "Ajouter un relevé, une sauvegarde, tes règles"],
@@ -59,8 +59,12 @@ export async function renderPlus(ctx, main) {
   };
   $("#r_city").onclick = () => {
     const { el, close } = sheet(`<h2>Ville pour les prix</h2><p class="hint">Sert à trouver les supermarchés et les prix relevés près de chez toi. Une seule recherche, gardée sur le téléphone.</p>
-      <form id="cf" class="row"><input id="cv" placeholder="ex. Nantes ou 44000" value="${h ? esc(h.city) : ""}" autofocus aria-label="Ville"><button class="btn">OK</button></form><div id="cm" class="err"></div>`);
-    el.querySelector("#cf").onsubmit = async e => { e.preventDefault(); try { await setHomeCity(el.querySelector("#cv").value.trim()); close(); renderPlus(ctx, main); } catch (err) { el.querySelector("#cm").textContent = err.message === "Ville introuvable" ? "Ville introuvable." : ctx.errText(err); } };
+      <form id="cf" class="row"><input id="cv" placeholder="ex. Nantes ou 44000" value="${h ? esc(h.city) : ""}" autofocus aria-label="Ville"><button class="btn">OK</button></form><div id="cm" class="err"></div><div id="cc" class="pricehint mt"></div>`);
+    const cover = async () => { const box = el.querySelector("#cc"); if (!home()) return; box.innerHTML = `<span class="sub">Comptage des prix relevés autour de ${esc(home().city)}…</span>`; const c = await priceCoverage(); if (!c || !el.isConnected) return;
+      box.innerHTML = `<div class="pchip"><span><b>Prix relevés depuis 2 ans autour de ${esc(home().city)}</b><br>${c.r10} à 10 km · ${c.r40} à 40 km · ${c.r100} à 100 km</span></div>
+        <p class="sub">${c.r40 < 300 ? "C'est peu : Open Prices est une base collaborative encore jeune dans ta région. L'appli prend d'abord les relevés près de chez toi, puis ceux de ton enseigne en France, et indique toujours d'où vient chaque prix. Chaque prix que tu saisis en magasin complète ta propre base." : "Bonne couverture : la plupart des prix viendront de magasins proches."}</p>`; };
+    cover();
+    el.querySelector("#cf").onsubmit = async e => { e.preventDefault(); try { await setHomeCity(el.querySelector("#cv").value.trim()); el.querySelector("#cm").textContent = ""; cover(); renderPlus(ctx, main); } catch (err) { el.querySelector("#cm").textContent = err.message === "Ville introuvable" ? "Ville introuvable." : ctx.errText(err); } };
   };
   if ($("#r_notif")) $("#r_notif").onclick = () => {
     const { el } = sheet(`<h2>Lecture des paiements</h2><p class="hint">Quand ta banque t'envoie une notification de paiement, l'appli récupère le montant et le commerçant pour te proposer la dépense dans « Aujourd'hui ». Seules les applis bancaires et de paiement sont lues ; rien n'est envoyé ailleurs.</p>

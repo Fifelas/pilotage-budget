@@ -18,6 +18,7 @@ function pbChanged() {
 window.addEventListener("message", e => {
   const d = e.data || {};
   if (d.pbReloadKeys) { manual = null; notifInbox = null; jourState(); try { refresh(); } catch (err) {} }
+  if (d.pbShow && typeof pbDirty !== "undefined" && pbDirty) { try { refresh(); } catch (err) {} }
 });
 
 /* ---------- Saisies rapides : comptées jusqu'au relevé qui les couvre ---------- */
@@ -282,8 +283,12 @@ window.pbModel = () => {
   }).sort((a, b) => b.spent / b.target - a.spent / a.target);
   const now = new Date(), dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(), pace = now.getDate() / dim;
   const scen = {}; const keep = targets;
-  for (const k of ["actuel", "raisonnable", "ambitieux"]) { applyScenarioTmp(k); scen[k] = { marge: A.marge + planSavings(), savings: planSavings() }; }
+  const presets = {};
+  for (const k of ["actuel", "raisonnable", "ambitieux"]) { applyScenarioTmp(k); presets[k] = { ...targets }; scen[k] = { marge: A.marge + planSavings(), savings: planSavings() }; }
+  const perso = store.get("targetsPerso", null);
+  if (perso) { targets = { ...perso }; scen.perso = { marge: A.marge + planSavings(), savings: planSavings() }; presets.perso = perso; }
   targets = keep;
+  const plan = PLAN_CATS.map(c => ({ c, label: CATS[c][0], avg: Math.round(Math.max(0, A.dep[c] || 0) * 100) / 100, target: Math.round((targets && targets[c]) ?? Math.max(0, A.dep[c] || 0)) }));
   const acts = actionsList();
   const later = store.get("later", {});
   const todo = acts.filter(a => !done[a.id]).sort((a, b) => (later[a.id] ? 1 : 0) - (later[b.id] ? 1 : 0) || b.gain - a.gain);
@@ -291,7 +296,7 @@ window.pbModel = () => {
   const today = isoToday(), in7 = isoOf(new Date(Date.now() + 7 * 864e5)), mk = today.slice(0, 7);
   const soon = recurrents().filter(x => !x.occ.some(r => r.month === mk)).map(x => { const d = `${mk}-${pad2(Math.min(x.day, dim))}`; return { label: x.label, amount: x.perMonth, d }; }).filter(x => x.d >= today && x.d <= in7).sort((a, b) => a.d.localeCompare(b.d));
   const ev = rows.filter(r => r.tag === "evitable"), evM = -ev.reduce((a, r) => a + r.amount, 0) / Math.max(1, A.periodMonths || new Set(ev.map(r => r.month)).size);
-  return { ...base, jour: j, env, pace, scenario, scen, marge: A.marge, revenus: A.revenus, depenses: A.depenses,
+  return { ...base, jour: j, env, pace, scenario, scen, presets, plan, marge: A.marge, revenus: A.revenus, depenses: A.depenses,
     actions: todo.slice(0, 3).map(a => ({ id: a.id, t: a.t.replace(/<[^>]+>/g, ""), gain: a.gain, later: !!later[a.id] })), actionsDone: acts.filter(a => done[a.id]).length, actionsTotal: acts.length,
     gained: acts.filter(a => done[a.id]).reduce((s, a) => s + a.gain, 0), potential: todo.reduce((s, a) => s + a.gain, 0),
     treso: t ? { pts: t.pts.map(p => ({ d: p.d, bal: Math.round(p.bal), ev: p.ev.map(([l, v]) => [l, Math.round(v)]) })), min: { d: t.min.d, bal: Math.round(t.min.bal) }, start: Math.round(t.start), daily: t.daily, sd: t.sd } : null,
@@ -300,8 +305,9 @@ window.pbModel = () => {
 };
 window.pbAct = (op, a = {}) => {
   jourState();
-  if (op === "scenario") { applyScenario(a.k); }
-  else if (op === "target") { targets[a.c] = Math.max(0, Math.round(a.v)); store.set("targets", targets); }
+  if (op === "scenario") { if (a.k === "perso") { const p = store.get("targetsPerso", null); if (!p) return; targets = { ...p }; scenario = "perso"; store.set("targets", targets); store.set("scenario", scenario); } else applyScenario(a.k); }
+  else if (op === "targets") { targets = {}; for (const c of PLAN_CATS) targets[c] = Math.max(0, Math.round(+a.targets[c] || 0)); scenario = "perso"; store.set("targetsPerso", targets); store.set("targets", targets); store.set("scenario", scenario); }
+  else if (op === "target") { targets[a.c] = Math.max(0, Math.round(a.v)); scenario = "perso"; store.set("targetsPerso", { ...targets }); store.set("targets", targets); store.set("scenario", scenario); }
   else if (op === "done") { done[a.id] = isoToday(); store.set("done", done); }
   else if (op === "later") { const l = store.get("later", {}); l[a.id] = isoToday(); store.set("later", l); }
   else if (op === "add") { addManual(a); return; }

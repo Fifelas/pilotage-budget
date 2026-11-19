@@ -122,7 +122,14 @@ const ctx = {
   win: () => { const f = document.getElementById("budget"); return f && f.contentWindow; },
   ready: () => frameReady,
   model: () => { try { return ctx.win().pbModel(); } catch { return null; } },
-  act: (op, a) => { try { return ctx.win().pbAct(op, a); } catch (e) { toast("Le budget n'est pas encore chargé."); } },
+  // Action sur le budget : calcul immédiat, puis un seul réaffichage de l'écran (pas de double rendu)
+  act: (op, a) => {
+    S.selfChange = Date.now(); let r;
+    try { r = ctx.win().pbAct(op, a); } catch (e) { toast("Le budget n'est pas encore chargé."); return; }
+    if (!["cats", "guess"].includes(op) && !S.detail && ["today", "budget"].includes(S.tab)) { clearTimeout(S.reT); S.reT = setTimeout(() => show(S.tab), 0); }
+    return r;
+  },
+  isReady: () => !!S.frameOk,
   go: (tab, sub) => show(tab, sub),
   detail: (g, s, title) => openDetail(g, s, title),
   rerender: () => show(S.tab),
@@ -135,7 +142,8 @@ function render() {
     <div id="updbar"></div>
     <main id="main"></main>
     <div id="detail" hidden><div class="dhead"><button class="back" id="dback" aria-label="Retour">←</button><h1 id="dtitle"></h1></div><iframe id="budget" title="Détail du budget" src="./budget/index.html?embed=1#g=plus&s=comptes"></iframe></div>`;
-  frameReady = new Promise(ok => { const f = document.getElementById("budget"); f.addEventListener("load", () => ok(), { once: true }); });
+  S.frameOk = false;
+  frameReady = new Promise(ok => { const f = document.getElementById("budget"); f.addEventListener("load", () => { S.frameOk = true; ok(); }, { once: true }); });
   document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => show(b.dataset.t));
   document.getElementById("dback").onclick = closeDetail;
   window.onresize = sizeFrame;
@@ -156,7 +164,8 @@ function show(tab, sub) {
   S.tab = tab; if (sub) S.sub[tab] = sub;
   document.querySelectorAll("[data-t]").forEach(b => { b.classList.toggle("on", b.dataset.t === tab); b.setAttribute("aria-current", b.dataset.t === tab ? "page" : "false"); });
   const main = document.getElementById("main"); if (!main) return;
-  const keepY = main.dataset.tab === tab ? window.scrollY : 0; main.dataset.tab = tab;
+  const same = main.dataset.tab === tab, keepY = same ? window.scrollY : 0; main.dataset.tab = tab;
+  if (!same) { main.classList.remove("fade"); void main.offsetWidth; main.classList.add("fade"); }
   ({ today: renderToday, budget: renderBudget, courses: renderCourses, plus: renderPlus })[tab](ctx, main);
   window.scrollTo({ top: keepY });
 }
@@ -167,7 +176,7 @@ function openDetail(g, s, title) {
   const d = document.getElementById("detail"), f = document.getElementById("budget");
   document.getElementById("dtitle").textContent = title || "";
   document.getElementById("main").hidden = true; d.hidden = false; document.body.classList.add("indetail");
-  try { f.contentWindow.location.hash = `g=${g}&s=${s}`; } catch { f.src = `./budget/index.html?embed=1#g=${g}&s=${s}`; }
+  try { f.contentWindow.location.hash = `g=${g}&s=${s}`; f.contentWindow.postMessage({ pbShow: true }, "*"); } catch { f.src = `./budget/index.html?embed=1#g=${g}&s=${s}`; }
   sizeFrame(); window.scrollTo({ top: 0 });
 }
 function closeDetail(silent) {
@@ -185,10 +194,16 @@ function sizeFrame() {
 let rerT = null;
 window.addEventListener("message", e => {
   const d = e.data || {}; if (!S.household) return;
-  if (d.pbChanged) { S.vault && S.vault.schedule(); clearTimeout(rerT); rerT = setTimeout(() => { if (!S.detail && ["today", "budget"].includes(S.tab) && !document.querySelector(".sheetwrap")) show(S.tab); }, 300); }
+  if (d.pbChanged) {
+    S.vault && S.vault.schedule();
+    // un changement venu de l'écran lui-même est déjà affiché ; sinon (synchro, détail) on rafraîchit
+    if (Date.now() - (S.selfChange || 0) < 2500) return;
+    clearTimeout(rerT); rerT = setTimeout(() => { if (!S.detail && ["today", "budget"].includes(S.tab) && !document.querySelector(".sheetwrap")) show(S.tab); }, 400);
+  }
   if (d.pbAddToList) addToList(ctx, d.pbAddToList);
-  if (d.pbGroup && S.detail && d.pbGroup !== "plus") { /* lien interne du module vers un autre écran : on revient à l'appli */
-    closeDetail(true); show({ accueil: "today", mois: "budget", eco: "budget", pret: "budget", courses: "courses" }[d.pbGroup] || "today"); }
+  // bouton du module qui mène vers un autre écran (ex. « Importer mes données ») : seulement s'il change de rubrique
+  if (d.pbGroup && S.detail && d.pbGroup !== S.detail.g && ["accueil", "mois", "courses"].includes(d.pbGroup)) {
+    closeDetail(true); show({ accueil: "today", mois: "budget", courses: "courses" }[d.pbGroup]); }
 });
 
 /* ---------- Coffre chiffré ---------- */
